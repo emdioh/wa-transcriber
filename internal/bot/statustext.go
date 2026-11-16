@@ -44,7 +44,9 @@ func (b *Bot) statusText() string {
 	}
 	if b.Addrs != nil {
 		for _, a := range b.Addrs() {
-			urls = append(urls, fmt.Sprintf("%s:\n%s", a.Interface, webURL(a.IP, b.WebPort)))
+			// Inline code (`…`): WhatsApp does not link IP URLs properly,
+			// so make them at least easy to copy with a long press.
+			urls = append(urls, fmt.Sprintf("%s:\n`%s`", a.Interface, webURL(a.IP, b.WebPort)))
 		}
 	}
 	if len(urls) == 0 {

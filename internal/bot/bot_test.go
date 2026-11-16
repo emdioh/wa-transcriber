@@ -215,7 +215,7 @@ func TestAdminCommandsOnlyInSelfChat(t *testing.T) {
 	}
 	e.send(e.msg(me, true, "!status"))
 	r := e.wa.last(t)
-	if r.chat != me || !strings.Contains(r.text, "eth0:\nhttp://192.168.1.40:8080/") ||
+	if r.chat != me || !strings.Contains(r.text, "eth0:\n`http://192.168.1.40:8080/`") ||
 		!strings.Contains(r.text, "WhatsApp: offline") {
 		t.Fatalf("status = %+v", r)
 	}
@@ -225,7 +225,7 @@ func TestStatusURLPort(t *testing.T) {
 	e := newEnv(t)
 	e.bot.WebPort = "80"
 	e.send(e.msg(me, true, "!status"))
-	if r := e.wa.last(t).text; !strings.Contains(r, "eth0:\nhttp://192.168.1.40/") {
+	if r := e.wa.last(t).text; !strings.Contains(r, "eth0:\n`http://192.168.1.40/`") {
 		t.Fatalf("port 80 must be omitted: %q", r)
 	}
 	e.bot.WebPort = ""
