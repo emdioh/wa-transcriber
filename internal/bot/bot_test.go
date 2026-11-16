@@ -214,7 +214,7 @@ func TestAdminCommandsOnlyInSelfChat(t *testing.T) {
 	}
 	e.send(e.msg(me, true, "!status"))
 	r := e.wa.last(t)
-	if r.chat != me || !strings.Contains(r.text, "http://192.168.1.40 (eth0)") ||
+	if r.chat != me || !strings.Contains(r.text, "eth0:\nhttp://192.168.1.40/") ||
 		!strings.Contains(r.text, "WhatsApp: offline") {
 		t.Fatalf("status = %+v", r)
 	}

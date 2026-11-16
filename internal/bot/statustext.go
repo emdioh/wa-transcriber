@@ -33,19 +33,22 @@ func (b *Bot) statusText() string {
 		configured, onoff(tr.Global), len(tr.Chats))
 	fmt.Fprintf(&sb, "• Uptime: %s\n", now.Sub(s.Started).Round(time.Second))
 
+	// One URL per line, nothing glued to it: WhatsApp's link detection is
+	// fragile with IP addresses (it linkified only the IP of
+	// "http://192.168.1.40 (eth0)").
 	var urls []string
 	if cfg.PublicURL != "" {
 		urls = append(urls, cfg.PublicURL)
 	}
 	if b.Addrs != nil {
 		for _, a := range b.Addrs() {
-			urls = append(urls, fmt.Sprintf("http://%s (%s)", a.IP, a.Interface))
+			urls = append(urls, fmt.Sprintf("%s:\nhttp://%s/", a.Interface, a.IP))
 		}
 	}
 	if len(urls) == 0 {
 		urls = append(urls, "no network address")
 	}
-	fmt.Fprintf(&sb, "• Web UI: %s", strings.Join(urls, ", "))
+	fmt.Fprintf(&sb, "• Web UI:\n%s", strings.Join(urls, "\n"))
 	return sb.String()
 }
 
