@@ -2,11 +2,13 @@
 
 A small static binary that links to your WhatsApp account as a companion
 device and transcribes voice notes. Built for headless boards (Raspberry Pi 2,
-BeagleBoard) and Docker. Design: [docs/DESIGN.md](docs/DESIGN.md).
+BeagleBoard) and Docker.
 
-Status: milestones 1, 3 and 4 — pairing, `!commands`, transcription and
-translation (OpenAI, OpenRouter, Gemini), web UI, config, in-memory logs.
-Network management (WiFi, setup AP, mDNS) is next.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): architecture and the decisions behind it
+- [docs/STATUS.md](docs/STATUS.md): what is done and verified, known limitations
+- [docs/PLAN.md](docs/PLAN.md): remaining milestones, step by step, with exit criteria
+
+Status: milestones 1, 3 and 4 done (see [STATUS.md](docs/STATUS.md)).
 
 ## Build
 

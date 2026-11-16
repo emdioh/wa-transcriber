@@ -1,5 +1,5 @@
 // Command wa-transcriber links to WhatsApp as a companion device and
-// transcribes voice notes. See docs/DESIGN.md.
+// transcribes voice notes. See docs/ARCHITECTURE.md.
 package main
 
 import (
