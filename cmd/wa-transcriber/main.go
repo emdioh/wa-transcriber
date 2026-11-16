@@ -21,6 +21,7 @@ import (
 	"github.com/emdioh/wa-transcriber/internal/status"
 	"github.com/emdioh/wa-transcriber/internal/transcribe"
 	"github.com/emdioh/wa-transcriber/internal/wa"
+	"github.com/emdioh/wa-transcriber/internal/web"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -38,6 +39,7 @@ func run() error {
 	pairPhone := flag.String("pair-phone", os.Getenv("WAT_PAIR_PHONE"),
 		"pair with a code instead of a QR: phone number with country code (env WAT_PAIR_PHONE)")
 	logLevel := flag.String("log-level", envOr("WAT_LOG_LEVEL", "info"), "debug, info, warn or error (env WAT_LOG_LEVEL)")
+	listen := flag.String("listen", envOr("WAT_LISTEN", ":80"), "web UI address, empty to disable (env WAT_LISTEN)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -48,7 +50,7 @@ func run() error {
 	memTotal := logbuf.MemTotal()
 	setMemoryLimit(memTotal)
 	logs := logbuf.New(logbuf.SizeForMemory(memTotal), os.Stderr)
-	var level slog.Level
+	level := new(slog.LevelVar) // changeable from the web UI
 	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
 		return fmt.Errorf("bad -log-level: %w", err)
 	}
@@ -106,6 +108,10 @@ func run() error {
 		// TODO(netmgr): erase saved WiFi networks.
 		return restart(log)
 	}
+	unlink := func(ctx context.Context) error {
+		client.Logout(ctx)
+		return restart(log)
+	}
 	client.OnMessage = func(m *bot.Message) { b.Handle(ctx, m) }
 	client.OnLoggedOut = func() {
 		// Unlinked from the phone: drop the session, keep the settings, pair again.
@@ -114,6 +120,28 @@ func run() error {
 			log.Error("restart after logout failed", "err", err)
 			stop()
 		}
+	}
+
+	if *listen != "" {
+		ui := web.New(web.Options{
+			Config:   cfg,
+			Status:   st,
+			Logs:     logs,
+			LogLevel: level,
+			WA:       client,
+			Unlink:   unlink,
+			Reset:    b.Reset,
+			Addrs:    status.Addresses,
+			Version:  version,
+			Log:      log,
+		})
+		go func() {
+			log.Info("web UI listening", "addr", *listen)
+			// A busy port must not stop transcription: log and carry on.
+			if err := ui.ListenAndServe(ctx, *listen); err != nil {
+				log.Error("web UI stopped", "addr", *listen, "err", err)
+			}
+		}()
 	}
 
 	go func() {

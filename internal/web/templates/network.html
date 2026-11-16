@@ -1,0 +1,19 @@
+{{define "content"}}
+<section class="card">
+  <h2>Addresses</h2>
+  {{if .Addrs}}
+  <table>
+    <tr><th>Interface</th><th>Address</th></tr>
+    {{range .Addrs}}<tr><td>{{.Interface}}</td><td><code>{{.IP}}</code></td></tr>{{end}}
+  </table>
+  {{else}}<p>No network address.</p>{{end}}
+</section>
+<section class="card">
+  <h2>WiFi</h2>
+  {{if .Managed}}
+  <p>WiFi settings arrive with the network manager.</p>
+  {{else}}
+  <p>The network is managed by the host (Docker or a regular computer), so there is nothing to set here.</p>
+  {{end}}
+</section>
+{{end}}

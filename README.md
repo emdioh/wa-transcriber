@@ -4,9 +4,9 @@ A small static binary that links to your WhatsApp account as a companion
 device and transcribes voice notes. Built for headless boards (Raspberry Pi 2,
 BeagleBoard) and Docker. Design: [docs/DESIGN.md](docs/DESIGN.md).
 
-Status: milestones 1 and 3 — pairing, `!commands`, transcription and
-translation (OpenAI, OpenRouter, Gemini), config, in-memory logs. Web UI and
-network management are next.
+Status: milestones 1, 3 and 4 — pairing, `!commands`, transcription and
+translation (OpenAI, OpenRouter, Gemini), web UI, config, in-memory logs.
+Network management (WiFi, setup AP, mDNS) is next.
 
 ## Build
 
@@ -24,7 +24,9 @@ make test
 ./wa-transcriber -data ./data
 ```
 
-On first start a QR code is printed: WhatsApp → Settings → Linked devices →
+Open the web UI (`http://<device>/`, or `-listen :8080` on a dev machine),
+choose a password and link WhatsApp from the WhatsApp page. A QR code is also
+printed in the terminal: WhatsApp → Settings → Linked devices →
 Link a device. To pair with a code instead (no camera needed):
 
 ```bash
@@ -35,7 +37,7 @@ Docker:
 
 ```bash
 docker build -t wa-transcriber .
-docker run -it -v wa-data:/data wa-transcriber
+docker run -it -p 8080:80 -v wa-data:/data wa-transcriber
 ```
 
 | Flag | Env | Default |
@@ -43,12 +45,13 @@ docker run -it -v wa-data:/data wa-transcriber
 | `-data` | `WAT_DATA` | `/data` |
 | `-pair-phone` | `WAT_PAIR_PHONE` | (QR) |
 | `-log-level` | `WAT_LOG_LEVEL` | `info` |
+| `-listen` | `WAT_LISTEN` | `:80` (empty: no web UI) |
 
 ## Transcription settings
 
-Until the web UI exists, set them in `<data>/config.json` (read at every
-voice note, no restart needed) or with environment variables, which win over
-the file and are never saved:
+Set them on the web UI's Transcription page, in `<data>/config.json` (read
+at every voice note, no restart needed) or with environment variables, which
+win over both, are never saved, and show as read-only in the UI:
 
 ```json
 {

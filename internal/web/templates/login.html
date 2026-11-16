@@ -1,0 +1,10 @@
+{{define "content"}}
+<section class="card narrow">
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="next" value="{{.}}">
+    <label>Password <input type="password" name="password" required autocomplete="current-password" autofocus></label>
+    <button>Log in</button>
+  </form>
+  <p class="hint">Forgot it? Send <code>!password</code> in your own WhatsApp chat to get a new one.</p>
+</section>
+{{end}}

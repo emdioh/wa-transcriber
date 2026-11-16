@@ -1,0 +1,11 @@
+{{define "content"}}
+<section class="card">
+  <p>Choose the password that protects this page. It guards your API key and your WhatsApp link, so pick a real one.</p>
+  <form method="post" action="/setup" class="stack">
+    <label>Password <input type="password" name="password" minlength="{{.}}" required autocomplete="new-password" autofocus></label>
+    <label>Repeat it <input type="password" name="confirm" minlength="{{.}}" required autocomplete="new-password"></label>
+    <button>Save password</button>
+  </form>
+  <p class="hint">At least {{.}} characters. You can change it later here or with <code>!password</code> in your own WhatsApp chat.</p>
+</section>
+{{end}}

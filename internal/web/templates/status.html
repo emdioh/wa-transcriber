@@ -1,0 +1,39 @@
+{{define "content"}}
+<section class="grid">
+  <div class="card">
+    <h2>WhatsApp</h2>
+    {{if .Paired}}
+      <p class="big"><span class="dot {{if .Snap.Connected}}on{{else}}off{{end}}"></span>{{if .Snap.Connected}}Online{{else}}Offline{{end}}</p>
+      {{with .Snap.Account}}<p>Linked to +{{.}}</p>{{end}}
+    {{else}}
+      <p class="big"><span class="dot off"></span>Not linked</p>
+      <p><a class="button" href="/whatsapp">Link WhatsApp</a></p>
+    {{end}}
+  </div>
+  <div class="card">
+    <h2>Activity</h2>
+    <dl>
+      <dt>Last message seen</dt><dd>{{ago .Snap.LastMessage}}</dd>
+      <dt>Last transcription</dt><dd>{{ago .Snap.LastTranscription}}</dd>
+      <dt>Uptime</dt><dd>{{.Uptime}}</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <h2>Transcription</h2>
+    <dl>
+      <dt>Provider</dt><dd>{{.Transcription}}</dd>
+      <dt>Default for chats</dt><dd>{{if .Global}}on{{else}}off{{end}}</dd>
+      <dt>Chat overrides</dt><dd>{{.Overrides}}</dd>
+    </dl>
+    <p><a href="/transcription">Settings →</a></p>
+  </div>
+  <div class="card">
+    <h2>Device</h2>
+    <dl>
+      {{range .Addrs}}<dt>{{.Interface}}</dt><dd><code>{{.IP}}</code></dd>{{else}}<dt>Network</dt><dd>no address</dd>{{end}}
+      <dt>Memory</dt><dd>{{printf "%.1f" .HeapMB}} MB heap, {{printf "%.1f" .SysMB}} MB from the OS</dd>
+      <dt>Log level</dt><dd>{{.LogLevel}}</dd>
+    </dl>
+  </div>
+</section>
+{{end}}

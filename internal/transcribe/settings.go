@@ -46,13 +46,6 @@ type Settings struct {
 	Timeout          time.Duration
 }
 
-// EnvVars maps environment variables to the setting they override. They are
-// meant for Docker and first boot; they are never written to config.json.
-var EnvVars = []string{
-	"WAT_PROVIDER", "WAT_API_KEY", "WAT_MODEL", "WAT_BASE_URL",
-	"WAT_TRANSLATION_MODEL", "WAT_KEEP_LANGUAGES", "WAT_TRANSLATE_TO", "WAT_TIMEOUT",
-}
-
 // Resolve computes the effective settings. getenv is os.Getenv in production.
 func Resolve(t config.Transcription, getenv func(string) string) Settings {
 	if getenv == nil {
@@ -124,4 +117,38 @@ func (s Settings) wantsTranslation(lang string) bool {
 		}
 	}
 	return true
+}
+
+// envFields maps config.json field names to the variable overriding them.
+var envFields = map[string]string{
+	"provider":          "WAT_PROVIDER",
+	"api_key":           "WAT_API_KEY",
+	"model":             "WAT_MODEL",
+	"base_url":          "WAT_BASE_URL",
+	"translation_model": "WAT_TRANSLATION_MODEL",
+	"keep_languages":    "WAT_KEEP_LANGUAGES",
+	"translate_to":      "WAT_TRANSLATE_TO",
+	"timeout_seconds":   "WAT_TIMEOUT",
+}
+
+// EnvOverrides returns field -> variable name for the fields currently set
+// by the environment (the web UI shows them read-only).
+func EnvOverrides(getenv func(string) string) map[string]string {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	out := map[string]string{}
+	for field, env := range envFields {
+		if strings.TrimSpace(getenv(env)) != "" {
+			out[field] = env
+		}
+	}
+	return out
+}
+
+// Defaults returns a provider's default base URL, model and translation
+// model ("" for unknown providers).
+func Defaults(provider string) (baseURL, model, translationModel string) {
+	d := defaults[provider]
+	return d.baseURL, d.model, d.translationModel
 }

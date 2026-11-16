@@ -131,10 +131,42 @@ Android, iOS and Web, and the extra fields survive delivery.
 
 ## 7. Web UI
 
-Server-rendered HTML embedded in the binary, no JS framework. Pages: Status,
-WhatsApp (QR that refreshes itself, or pairing code by phone number),
-Transcription, WiFi, Logs. Password protected (bcrypt hash in config; set on
-first setup or with `!password`).
+Server-rendered HTML (`html/template`) embedded in the binary; one CSS file
+and ~50 lines of plain JS, light/dark theme, usable on a phone. Listens on
+`:80` (`-listen` / `WAT_LISTEN`; empty disables it). A port that cannot be
+opened is logged and does not stop transcription.
+
+Pages:
+
+- **Status**: WhatsApp state, last message/transcription, provider, addresses,
+  memory, log level.
+- **WhatsApp**: QR code (SVG drawn by the binary, follows the 20 s rotation),
+  or "link with phone number" (pairing code); once linked: account and
+  *Unlink* (logout keeping the settings, then restart).
+- **Transcription**: provider, API key (write-only: never sent back to the
+  browser), models, base URL, timeout, keep/translate languages, global
+  default, and the table of per-chat overrides (one row per chat even when it
+  is stored under both its phone-number and LID form; contact or group name
+  shown). Fields set by `WAT_*` variables are read-only.
+- **Network**: addresses; WiFi arrives with netmgr (milestone 5).
+- **Logs**: the RAM buffer with a level filter, optional 5 s refresh,
+  download; the recording level can be changed until the next restart.
+- **System**: change password, factory reset (type `RESET`).
+
+Security:
+
+- First visit: every page leads to `/setup` to choose the password (until one
+  exists, whoever reaches the device first sets it — on the setup AP that is
+  protected by the WPA2 key; on a LAN do it right after connecting, or set it
+  with `!password` beforehand).
+- bcrypt hash in `config.json`. Sessions: random 256-bit token, HttpOnly +
+  SameSite=Strict cookie, 30 days, in memory. A session is bound to the
+  password hash, so any change (web or `!password`) logs everybody out.
+- Failed logins are serialised with a 1 s delay.
+- POSTs whose Origin/Referer is another host are refused; CSP allows only
+  the device's own scripts/styles; no framing.
+- Plain HTTP: the device has no domain to get a certificate for. Acceptable
+  on a home LAN or the setup AP; documented.
 
 ## 8. Networking (mode "managed")
 
@@ -180,6 +212,6 @@ Mode "none" (Docker, development): no network management, no mDNS unless
 2. Invisible claim experiment (§6) on real phones.
 3. Transcription + translation. ✅ The coordination protocol (§6) waits for
    milestone 2 to confirm the invisible signals work.
-4. Web UI.
+4. Web UI. ✅
 5. netmgr + mDNS.
 6. Buildroot images (Pi 2 first, then BeagleBoard).

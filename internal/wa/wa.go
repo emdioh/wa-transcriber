@@ -55,10 +55,16 @@ type Client struct {
 
 	groupMu    sync.Mutex
 	groupCache map[types.JID]groupEntry
+
+	pairMu       sync.Mutex
+	pairPhone    string // pair with a code for this number instead of the QR
+	pairCodeSent bool   // a code is on screen for the current attempt
+	pairReady    bool   // connected and waiting to be paired
 }
 
 type groupEntry struct {
 	selfOnly bool
+	name     string
 	expires  time.Time
 }
 
@@ -109,12 +115,15 @@ func Open(ctx context.Context, opts Options) (*Client, error) {
 // Paired reports whether the device is linked to an account.
 func (c *Client) Paired() bool { return c.cli.Store.ID != nil }
 
-// Run connects, pairing first if needed (QR codes, plus a pairing code when
+// Run connects, pairing first if needed (QR codes, or a pairing code when
 // pairPhone is set), and returns once connected. Pairing attempts repeat
 // until ctx ends: a headless device must never give up.
 func (c *Client) Run(ctx context.Context, pairPhone string) error {
+	c.pairMu.Lock()
+	c.pairPhone = pairPhone
+	c.pairMu.Unlock()
 	for !c.Paired() {
-		if err := c.pairOnce(ctx, pairPhone); err != nil {
+		if err := c.pairOnce(ctx); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -134,7 +143,10 @@ func (c *Client) Run(ctx context.Context, pairPhone string) error {
 
 var errPairTimeout = errors.New("pairing codes expired")
 
-func (c *Client) pairOnce(ctx context.Context, pairPhone string) error {
+// ErrNotReady: the pairing connection is not up yet (or already paired).
+var ErrNotReady = errors.New("WhatsApp is not waiting for pairing right now, try again in a few seconds")
+
+func (c *Client) pairOnce(ctx context.Context) error {
 	qrCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ch, err := c.cli.GetQRChannel(qrCtx)
@@ -144,28 +156,41 @@ func (c *Client) pairOnce(ctx context.Context, pairPhone string) error {
 	if err := c.cli.ConnectContext(ctx); err != nil {
 		return err
 	}
-	defer c.setPairing("")
+	c.pairMu.Lock()
+	c.pairCodeSent = false
+	phone := c.pairPhone
+	c.pairMu.Unlock()
+	defer func() {
+		c.pairMu.Lock()
+		c.pairReady = false
+		c.pairMu.Unlock()
+		c.setPairing("")
+	}()
 	first := true
 	for item := range ch {
 		switch item.Event {
 		case whatsmeow.QRChannelEventCode:
-			if first && pairPhone != "" {
-				code, err := c.cli.PairPhone(ctx, pairPhone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
-				if err != nil {
-					c.log.Error("pairing code request failed", "err", err)
-				} else {
-					c.log.Info("pairing code: on the phone open Linked devices → Link with phone number", "code", code)
-					c.setPairing("code:" + code)
+			if first {
+				first = false
+				c.pairMu.Lock()
+				c.pairReady = true
+				c.pairMu.Unlock()
+				if phone != "" {
+					if err := c.requestCode(ctx, phone); err != nil {
+						c.log.Error("pairing code request failed", "err", err)
+					}
 				}
 			}
-			if pairPhone == "" {
+			c.pairMu.Lock()
+			codeOnScreen := c.pairCodeSent
+			c.pairMu.Unlock()
+			if !codeOnScreen {
 				c.setPairing("qr:" + item.Code)
 				c.log.Info("scan the QR code: WhatsApp → Linked devices → Link a device", "expires_in", item.Timeout)
 				if c.opts.QROut != nil {
 					qrterminal.GenerateHalfBlock(item.Code, qrterminal.L, c.opts.QROut)
 				}
 			}
-			first = false
 		case whatsmeow.QRChannelSuccess.Event:
 			c.log.Info("paired", "jid", c.cli.Store.ID)
 			return nil
@@ -181,6 +206,42 @@ func (c *Client) pairOnce(ctx context.Context, pairPhone string) error {
 		return nil
 	}
 	return errors.New("pairing channel closed")
+}
+
+func (c *Client) requestCode(ctx context.Context, phone string) error {
+	code, err := c.cli.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+	if err != nil {
+		return err
+	}
+	c.pairMu.Lock()
+	c.pairCodeSent = true
+	c.pairMu.Unlock()
+	c.log.Info("pairing code: on the phone open Linked devices → Link with phone number", "code", code)
+	c.setPairing("code:" + code)
+	return nil
+}
+
+// RequestPairingCode switches pairing to "link with phone number" for phone
+// (with country code). Later attempts keep using it until UseQR is called.
+func (c *Client) RequestPairingCode(ctx context.Context, phone string) error {
+	c.pairMu.Lock()
+	ready := c.pairReady && !c.Paired()
+	if ready {
+		c.pairPhone = phone
+	}
+	c.pairMu.Unlock()
+	if !ready {
+		return ErrNotReady
+	}
+	return c.requestCode(ctx, phone)
+}
+
+// UseQR goes back to QR pairing (from the next QR code on).
+func (c *Client) UseQR() {
+	c.pairMu.Lock()
+	c.pairPhone = ""
+	c.pairCodeSent = false
+	c.pairMu.Unlock()
 }
 
 func (c *Client) setPairing(code string) {
@@ -351,41 +412,99 @@ func (c *Client) Delete(ctx context.Context, chat types.JID, id string) error {
 	return err
 }
 
+// CanonicalChat returns the phone-number form of a LID chat when known, so
+// the two keys of one chat can be shown as one.
+func (c *Client) CanonicalChat(ctx context.Context, chat types.JID) types.JID {
+	if chat.Server == types.HiddenUserServer {
+		if pn, err := c.cli.Store.LIDs.GetPNForLID(ctx, chat); err == nil && !pn.IsEmpty() {
+			return pn.ToNonAD()
+		}
+	}
+	return chat.ToNonAD()
+}
+
+// ChatName is a human name for a chat ("" if unknown): contact name, or the
+// group subject (cached).
+func (c *Client) ChatName(ctx context.Context, chat types.JID) string {
+	switch chat.Server {
+	case types.DefaultUserServer, types.HiddenUserServer:
+		ci, err := c.cli.Store.Contacts.GetContact(ctx, chat)
+		if err != nil || !ci.Found {
+			return ""
+		}
+		for _, n := range []string{ci.FullName, ci.FirstName, ci.PushName, ci.BusinessName} {
+			if n != "" {
+				return n
+			}
+		}
+	case types.GroupServer:
+		c.groupMu.Lock()
+		e, ok := c.groupCache[chat]
+		c.groupMu.Unlock()
+		if ok && time.Now().Before(e.expires) {
+			return e.name
+		}
+		if !c.cli.IsConnected() {
+			return ""
+		}
+		info, err := c.cli.GetGroupInfo(ctx, chat)
+		if err != nil {
+			return ""
+		}
+		c.cacheGroup(chat, info)
+		return info.Name
+	}
+	return ""
+}
+
+func (c *Client) cacheGroup(chat types.JID, info *types.GroupInfo) {
+	selfOnly := len(info.Participants) == 1 && c.isMe(info.Participants[0])
+	c.groupMu.Lock()
+	c.groupCache[chat] = groupEntry{selfOnly: selfOnly, name: info.Name, expires: time.Now().Add(groupCacheTTL)}
+	c.groupMu.Unlock()
+}
+
+func (c *Client) isMe(p types.GroupParticipant) bool {
+	for _, j := range []types.JID{p.JID, p.PhoneNumber, p.LID} {
+		if c.isOwnJID(j) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) isOwnJID(j types.JID) bool {
+	if j.IsEmpty() {
+		return false
+	}
+	if id := c.cli.Store.ID; id != nil && j.Server == types.DefaultUserServer && j.User == id.User {
+		return true
+	}
+	lid := c.cli.Store.LID
+	return !lid.IsEmpty() && j.Server == types.HiddenUserServer && j.User == lid.User
+}
+
 // IsSelfChat: the "Message yourself" chat or a group whose only member is
 // the owner. Group lookups are cached briefly.
 func (c *Client) IsSelfChat(ctx context.Context, chat types.JID) bool {
-	ownPN, ownLID := types.EmptyJID, c.cli.Store.LID
-	if id := c.cli.Store.ID; id != nil {
-		ownPN = *id
-	}
-	isMe := func(j types.JID) bool {
-		return (!ownPN.IsEmpty() && j.User == ownPN.User && j.Server == types.DefaultUserServer) ||
-			(!ownLID.IsEmpty() && j.User == ownLID.User && j.Server == types.HiddenUserServer)
-	}
 	switch chat.Server {
 	case types.DefaultUserServer, types.HiddenUserServer:
-		return isMe(chat)
+		return c.isOwnJID(chat)
 	case types.GroupServer:
 	default:
 		return false
 	}
-
 	c.groupMu.Lock()
-	if e, ok := c.groupCache[chat]; ok && time.Now().Before(e.expires) {
-		c.groupMu.Unlock()
+	e, ok := c.groupCache[chat]
+	c.groupMu.Unlock()
+	if ok && time.Now().Before(e.expires) {
 		return e.selfOnly
 	}
-	c.groupMu.Unlock()
-
 	info, err := c.cli.GetGroupInfo(ctx, chat)
 	if err != nil {
 		c.log.Warn("group info lookup failed", "chat", chat, "err", err)
 		return false
 	}
-	selfOnly := len(info.Participants) == 1 &&
-		(isMe(info.Participants[0].JID) || isMe(info.Participants[0].PhoneNumber) || isMe(info.Participants[0].LID))
-	c.groupMu.Lock()
-	c.groupCache[chat] = groupEntry{selfOnly: selfOnly, expires: time.Now().Add(groupCacheTTL)}
-	c.groupMu.Unlock()
-	return selfOnly
+	c.cacheGroup(chat, info)
+	return len(info.Participants) == 1 && c.isMe(info.Participants[0])
 }

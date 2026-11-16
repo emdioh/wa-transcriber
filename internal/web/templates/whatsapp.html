@@ -1,0 +1,51 @@
+{{define "content"}}
+<div id="pairing" data-paired="{{.Paired}}" data-pairing="{{.Pairing}}" hidden></div>
+{{if .Paired}}
+<section class="card">
+  <p class="big"><span class="dot {{if .Connected}}on{{else}}off{{end}}"></span>{{if .Connected}}Online{{else}}Offline, reconnecting…{{end}}</p>
+  {{with .Account}}<p>Linked to <strong>+{{.}}</strong>. It shows as “WA Transcriber” in the phone's Linked devices list.</p>{{end}}
+</section>
+<section class="card danger">
+  <h2>Unlink</h2>
+  <p>Logs this device out of WhatsApp. Settings and password are kept; the device restarts and shows a new QR code.</p>
+  <form method="post" action="/whatsapp/unlink" class="row">
+    <label class="check"><input type="checkbox" name="confirm" value="yes" required> I want to unlink</label>
+    <button class="danger">Unlink WhatsApp</button>
+  </form>
+</section>
+{{else}}
+<section class="grid">
+  <div class="card">
+    {{if .Code}}
+      <h2>Enter this code on the phone</h2>
+      <p class="code">{{.Code}}</p>
+      <ol>
+        <li>WhatsApp → Settings → Linked devices → Link a device</li>
+        <li>Tap “Link with phone number instead”</li>
+        <li>Enter the code above</li>
+      </ol>
+      <form method="post" action="/whatsapp/qr"><button class="secondary">Use a QR code instead</button></form>
+    {{else if .QR}}
+      <h2>Scan with WhatsApp</h2>
+      <img class="qr" src="/whatsapp/qr.svg?v={{.Stamp}}" alt="WhatsApp pairing QR code" width="264" height="264">
+      <ol>
+        <li>WhatsApp → Settings → Linked devices</li>
+        <li>Link a device, then scan the code</li>
+      </ol>
+      <p class="hint">The code changes every 20 seconds; this page follows it.</p>
+    {{else}}
+      <h2>Connecting to WhatsApp…</h2>
+      <p>The pairing code appears here in a few seconds. If it does not, check the network and the <a href="/logs?level=warn">logs</a>.</p>
+    {{end}}
+  </div>
+  <div class="card">
+    <h2>Link with phone number</h2>
+    <p>Handy when the phone is the only screen around: you type a code instead of scanning.</p>
+    <form method="post" action="/whatsapp/phone" class="stack">
+      <label>Your number, with country code <input type="tel" name="phone" placeholder="+39 333 1234567" required autocomplete="tel"></label>
+      <button>Get a code</button>
+    </form>
+  </div>
+</section>
+{{end}}
+{{end}}

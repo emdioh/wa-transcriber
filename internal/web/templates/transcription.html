@@ -1,0 +1,68 @@
+{{define "content"}}
+<form method="post" action="/transcription" class="card stack">
+  <h2>Speech-to-text service</h2>
+  {{$env := .Env}}
+  <label>Provider
+    <select name="provider" {{if index $env "provider"}}disabled{{end}}>
+      {{range .Providers}}<option value="{{.}}" {{if eq . $.Eff.Provider}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </label>
+  {{if index $env "provider"}}<input type="hidden" name="provider" value="{{.Eff.Provider}}"><p class="hint">Set by {{index $env "provider"}}.</p>{{end}}
+
+  <label>API key
+    <input type="password" name="api_key" autocomplete="off" {{if index $env "api_key"}}disabled placeholder="set by {{index $env "api_key"}}"{{else if .HasKey}}placeholder="saved: leave empty to keep it"{{else}}placeholder="paste the key"{{end}}>
+  </label>
+  {{if and .HasKey (not (index $env "api_key"))}}<label class="check"><input type="checkbox" name="clear_key"> Delete the saved key</label>{{end}}
+
+  <details {{if or .Cfg.Model .Cfg.BaseURL .Cfg.TranslationModel .Cfg.TimeoutSeconds}}open{{end}}>
+    <summary>Models and endpoint</summary>
+    <div class="stack">
+      <label>Transcription model <input name="model" value="{{.Cfg.Model}}" placeholder="default: {{.Eff.Model}}" {{if index $env "model"}}disabled{{end}}></label>
+      <label>Translation model <input name="translation_model" value="{{.Cfg.TranslationModel}}" placeholder="default: {{.Eff.TranslationModel}}" {{if index $env "translation_model"}}disabled{{end}}></label>
+      <label>Base URL <input name="base_url" value="{{.Cfg.BaseURL}}" placeholder="default: {{.Eff.BaseURL}}" {{if index $env "base_url"}}disabled{{end}}></label>
+      <label>Timeout (seconds) <input type="number" name="timeout_seconds" min="0" max="600" value="{{if .Cfg.TimeoutSeconds}}{{.Cfg.TimeoutSeconds}}{{end}}" placeholder="120" {{if index $env "timeout_seconds"}}disabled{{end}}></label>
+      <table class="small">
+        <caption>Defaults when a field is empty</caption>
+        <tr><th>Provider</th><th>Transcription</th><th>Translation</th></tr>
+        {{range .Defaults}}<tr><td>{{.Name}}</td><td><code>{{.Model}}</code></td><td><code>{{.TranslationModel}}</code></td></tr>{{end}}
+      </table>
+    </div>
+  </details>
+
+  <h2>Languages</h2>
+  <label>Keep as they are <input name="keep_languages" value="{{.Keep}}" placeholder="it, en" {{if index $env "keep_languages"}}disabled{{end}}></label>
+  <label>Translate everything else to <input name="translate_to" value="{{.Cfg.TranslateTo}}" placeholder="it (empty: never translate)" {{if index $env "translate_to"}}disabled{{end}}></label>
+  <p class="hint">ISO codes (it, en, de…) or English names. A translated note is posted as <code>🎤 [de→it] translation</code> followed by the original.</p>
+
+  <h2>Default for chats</h2>
+  <label class="check"><input type="checkbox" name="global" {{if .Cfg.Global}}checked{{end}}> Transcribe voice notes in every chat, unless a chat says otherwise</label>
+  <p class="hint">Same as <code>!transcription global on|off</code>.</p>
+
+  {{if $env}}<p class="hint">Greyed-out fields come from environment variables and cannot be changed here.</p>{{end}}
+  <button>Save</button>
+</form>
+
+<section class="card" id="chats">
+  <h2>Chats with their own setting</h2>
+  {{if .Chats}}
+  <table>
+    <tr><th>Chat</th><th>Auto-transcription</th><th></th></tr>
+    {{range .Chats}}
+    <tr>
+      <td>{{if .Name}}<strong>{{.Name}}</strong><br>{{end}}<span class="muted">{{.Who}}</span></td>
+      <td>{{if .On}}on{{else}}off{{end}}</td>
+      <td class="actions">
+        <form method="post" action="/transcription/chat">
+          {{range .Keys}}<input type="hidden" name="key" value="{{.}}">{{end}}
+          <button name="action" value="{{if .On}}off{{else}}on{{end}}" class="secondary">Turn {{if .On}}off{{else}}on{{end}}</button>
+          <button name="action" value="remove" class="link" title="Follow the default again">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </table>
+  {{else}}
+  <p>None yet. Send <code>!transcription on</code> or <code>off</code> in a chat to add it here.</p>
+  {{end}}
+</section>
+{{end}}

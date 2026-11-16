@@ -1,0 +1,25 @@
+{{define "content"}}
+<section class="card">
+  <div class="row spread">
+    <form method="get" action="/logs" class="row">
+      <label>Show from
+        <select name="level">{{range .Levels}}<option {{if eq . $.Filter}}selected{{end}}>{{.}}</option>{{end}}</select>
+      </label>
+      <button class="secondary">Filter</button>
+    </form>
+    <label class="check"><input type="checkbox" id="autorefresh"> Refresh every 5 s</label>
+    <a class="button secondary" href="/logs.txt">Download</a>
+  </div>
+  <p class="hint">{{len .Lines}} of {{.Total}} lines. Logs are kept in memory only and are lost on restart.</p>
+  <pre id="log">{{range .Lines}}{{.}}
+{{end}}</pre>
+</section>
+<section class="card">
+  <h2>Recording level</h2>
+  <form method="post" action="/logs/level" class="row">
+    <select name="level">{{range .Levels}}<option {{if eq . $.LogLevel}}selected{{end}}>{{.}}</option>{{end}}</select>
+    <button class="secondary">Apply</button>
+  </form>
+  <p class="hint">Debug is verbose and fills the buffer quickly. The level returns to the default at restart.</p>
+</section>
+{{end}}

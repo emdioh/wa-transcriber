@@ -1,0 +1,19 @@
+{{define "content"}}
+<section class="card">
+  <h2>Change password</h2>
+  <form method="post" action="/system/password" class="stack">
+    <label>Current password <input type="password" name="current" required autocomplete="current-password"></label>
+    <label>New password <input type="password" name="password" minlength="{{.}}" required autocomplete="new-password"></label>
+    <label>Repeat it <input type="password" name="confirm" minlength="{{.}}" required autocomplete="new-password"></label>
+    <button>Change password</button>
+  </form>
+</section>
+<section class="card danger">
+  <h2>Factory reset</h2>
+  <p>Unlinks WhatsApp and erases every setting, the password and the saved WiFi networks. The device restarts in setup mode. Same as <code>!reset</code>.</p>
+  <form method="post" action="/system/reset" class="row">
+    <label>Type RESET <input name="confirm" required pattern="RESET" autocomplete="off"></label>
+    <button class="danger">Erase everything</button>
+  </form>
+</section>
+{{end}}
