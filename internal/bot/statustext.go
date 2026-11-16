@@ -26,11 +26,8 @@ func (b *Bot) statusText() string {
 
 	tr := cfg.Transcription
 	configured := "not configured"
-	if b.Transcriber != nil {
-		configured = tr.Provider
-		if tr.Model != "" {
-			configured += " / " + tr.Model
-		}
+	if b.Transcriber != nil && b.Transcriber.Configured() {
+		configured = b.Transcriber.Describe()
 	}
 	fmt.Fprintf(&sb, "• Transcription: %s, global %s, %d chat override(s)\n",
 		configured, onoff(tr.Global), len(tr.Chats))

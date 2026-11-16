@@ -19,6 +19,7 @@ import (
 	"github.com/emdioh/wa-transcriber/internal/config"
 	"github.com/emdioh/wa-transcriber/internal/logbuf"
 	"github.com/emdioh/wa-transcriber/internal/status"
+	"github.com/emdioh/wa-transcriber/internal/transcribe"
 	"github.com/emdioh/wa-transcriber/internal/wa"
 )
 
@@ -78,14 +79,24 @@ func run() error {
 		return err
 	}
 
+	tr := transcribe.New(cfg, client, log)
+	if s := tr.Settings(); s.Configured() {
+		log.Info("transcription configured", "provider", s.Provider, "model", s.Model,
+			"translate_to", s.TranslateTo, "keep", s.Keep)
+	} else {
+		log.Warn("transcription not configured: set the provider and API key " +
+			"(web UI, config.json or WAT_PROVIDER / WAT_API_KEY)")
+	}
+
 	b := &bot.Bot{
-		WA:      client,
-		Config:  cfg,
-		Status:  st,
-		Addrs:   status.Addresses,
-		Version: version,
-		Started: started,
-		Log:     log,
+		WA:          client,
+		Config:      cfg,
+		Status:      st,
+		Transcriber: tr,
+		Addrs:       status.Addresses,
+		Version:     version,
+		Started:     started,
+		Log:         log,
 	}
 	b.Reset = func(ctx context.Context) error {
 		client.Logout(ctx)

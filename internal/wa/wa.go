@@ -326,6 +326,11 @@ func isVoice(a *waE2E.AudioMessage) bool {
 	return mime == "audio/ogg" || mime == "audio/opus"
 }
 
+// DownloadAudio fetches and decrypts a voice note (transcribe.Downloader).
+func (c *Client) DownloadAudio(ctx context.Context, a *waE2E.AudioMessage) ([]byte, error) {
+	return c.cli.Download(ctx, a)
+}
+
 // -- bot.Messenger ----------------------------------------------------------
 
 // Reply posts text in chat quoting q.

@@ -67,6 +67,9 @@ type fakeTr struct {
 	got  []Voice
 }
 
+func (f *fakeTr) Configured() bool { return true }
+func (f *fakeTr) Describe() string { return "fake / model" }
+
 func (f *fakeTr) Transcribe(_ context.Context, v Voice) (string, error) {
 	f.got = append(f.got, v)
 	return f.text, f.err

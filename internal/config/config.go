@@ -41,6 +41,8 @@ type Transcription struct {
 	// TranslateTo is the target for every other language ("" = never translate).
 	TranslateTo      string `json:"translate_to,omitempty"`
 	TranslationModel string `json:"translation_model,omitempty"`
+	// TimeoutSeconds of one provider request (0 = default).
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 }
 
 // Web UI settings.

@@ -85,12 +85,23 @@ owner. Elsewhere these commands are ignored, so nothing leaks to contacts
 
 - Providers: OpenAI-compatible `/audio/transcriptions` (OpenAI, OpenRouter)
   and Gemini. Voice notes are Ogg/Opus and are uploaded as `.ogg`: no ffmpeg.
-- Settings: provider, API key, model, base URL, timeout.
+- Settings: provider, API key, model, base URL, timeout, translation model.
+  Precedence: environment (`WAT_*`, never persisted) > `config.json` >
+  provider defaults. Settings are re-read for every voice note.
 - Translation: `keep` languages (e.g. `it, en`) and `translate_to` (e.g. `it`).
-  The transcript's language is detected; if not in `keep`, a chat model
-  translates it and the reply is `🎤 [de→it] <translation>` followed by the
-  original. With Gemini a single audio call can do all of it.
-- One job at a time (bounded queue); audio streamed from disk to the API.
+  Reply: `🎤 [de→it] <translation>` then `🗣 <original>`.
+  - OpenAI/OpenRouter: transcription call, then one chat call that detects
+    the language and translates if needed. The chat call is skipped when the
+    language is already known and kept (`whisper-1` reports it).
+  - Gemini: one audio call returns transcript, language and translation
+    (JSON response schema).
+  - The bot re-checks the detected language against the settings: a model
+    translating a kept language is ignored. A failed translation still posts
+    the transcript.
+- One job at a time, at most 8 waiting (more are refused and logged). Audio
+  is held in memory (≈100 KB per minute of voice; limit 15 MB) — on the
+  image `/tmp` is RAM anyway, so a temp file would not save anything.
+- Errors never include the API key.
 
 ## 6. Several transcribers in one chat
 
@@ -165,9 +176,10 @@ Mode "none" (Docker, development): no network management, no mDNS unless
 ## 11. Milestones
 
 1. whatsmeow skeleton: pairing (terminal QR / pairing code), message filter,
-   commands, config, in-memory logs, Dockerfile.
+   commands, config, in-memory logs, Dockerfile. ✅
 2. Invisible claim experiment (§6) on real phones.
-3. Transcription + translation, then the coordination protocol.
+3. Transcription + translation. ✅ The coordination protocol (§6) waits for
+   milestone 2 to confirm the invisible signals work.
 4. Web UI.
 5. netmgr + mDNS.
 6. Buildroot images (Pi 2 first, then BeagleBoard).

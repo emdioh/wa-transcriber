@@ -6,6 +6,7 @@ package bot
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -95,9 +96,16 @@ type Voice struct {
 	Audio *waE2E.AudioMessage
 }
 
+// ErrNotConfigured is returned by a Transcriber without provider/API key.
+var ErrNotConfigured = errors.New("transcription not configured")
+
 // Transcriber turns a voice note into the reply text (without prefix).
 type Transcriber interface {
 	Transcribe(ctx context.Context, v Voice) (string, error)
+	// Configured reports whether a provider and API key are set.
+	Configured() bool
+	// Describe is a one-line summary for !status ("openai / model, ...").
+	Describe() string
 }
 
 // Bot handles messages. Handle may be called concurrently.
@@ -105,7 +113,7 @@ type Bot struct {
 	WA          Messenger
 	Config      *config.Store
 	Status      *status.Tracker
-	Transcriber Transcriber // nil until configured
+	Transcriber Transcriber
 	// Reset unlinks WhatsApp, erases everything and restarts the process.
 	Reset   func(ctx context.Context) error
 	Addrs   func() []status.Addr
@@ -200,7 +208,12 @@ func (b *Bot) onVoice(ctx context.Context, m *Message) {
 // transcribe runs the transcriber and posts the result quoting the voice
 // note. When cmd is not nil (the !t command), problems are reported to it.
 func (b *Bot) transcribe(ctx context.Context, chat types.JID, v Voice, cmd *Message) {
-	if b.Transcriber == nil {
+	var text string
+	err := ErrNotConfigured
+	if b.Transcriber != nil && b.Transcriber.Configured() {
+		text, err = b.Transcriber.Transcribe(ctx, v)
+	}
+	if errors.Is(err, ErrNotConfigured) {
 		b.mu.Lock()
 		warn := !b.warnedNoTr
 		b.warnedNoTr = true
@@ -213,7 +226,6 @@ func (b *Bot) transcribe(ctx context.Context, chat types.JID, v Voice, cmd *Mess
 		}
 		return
 	}
-	text, err := b.Transcriber.Transcribe(ctx, v)
 	if err != nil {
 		b.log().Error("transcription failed", "chat", chat, "msg", v.Quote.ID, "err", err)
 		if cmd != nil {
