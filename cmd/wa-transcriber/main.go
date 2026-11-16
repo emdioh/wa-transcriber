@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -96,6 +97,7 @@ func run() error {
 		Status:      st,
 		Transcriber: tr,
 		Addrs:       status.Addresses,
+		WebPort:     listenPort(*listen),
 		Version:     version,
 		Started:     started,
 		Log:         log,
@@ -176,6 +178,17 @@ func setMemoryLimit(memTotal uint64) {
 	}
 	limit := min(max(memTotal/4, 32<<20), 256<<20)
 	debug.SetMemoryLimit(int64(limit))
+}
+
+// listenPort extracts the port of a -listen address ("" when disabled).
+func listenPort(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	if _, port, err := net.SplitHostPort(addr); err == nil && port != "" {
+		return port
+	}
+	return "80"
 }
 
 func envOr(name, def string) string {

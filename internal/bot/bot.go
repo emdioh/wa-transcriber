@@ -115,8 +115,10 @@ type Bot struct {
 	Status      *status.Tracker
 	Transcriber Transcriber
 	// Reset unlinks WhatsApp, erases everything and restarts the process.
-	Reset   func(ctx context.Context) error
-	Addrs   func() []status.Addr
+	Reset func(ctx context.Context) error
+	Addrs func() []status.Addr
+	// WebPort is the web UI port ("" = web UI disabled).
+	WebPort string
 	Version string
 	Started time.Time
 	Now     func() time.Time

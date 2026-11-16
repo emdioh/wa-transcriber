@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"time"
 )
@@ -33,16 +34,17 @@ func (b *Bot) statusText() string {
 		configured, onoff(tr.Global), len(tr.Chats))
 	fmt.Fprintf(&sb, "• Uptime: %s\n", now.Sub(s.Started).Round(time.Second))
 
-	// One URL per line, nothing glued to it: WhatsApp's link detection is
-	// fragile with IP addresses (it linkified only the IP of
-	// "http://192.168.1.40 (eth0)").
+	if b.WebPort == "" {
+		sb.WriteString("• Web UI: disabled")
+		return sb.String()
+	}
 	var urls []string
 	if cfg.PublicURL != "" {
 		urls = append(urls, cfg.PublicURL)
 	}
 	if b.Addrs != nil {
 		for _, a := range b.Addrs() {
-			urls = append(urls, fmt.Sprintf("%s:\nhttp://%s/", a.Interface, a.IP))
+			urls = append(urls, fmt.Sprintf("%s:\n%s", a.Interface, webURL(a.IP, b.WebPort)))
 		}
 	}
 	if len(urls) == 0 {
@@ -50,6 +52,14 @@ func (b *Bot) statusText() string {
 	}
 	fmt.Fprintf(&sb, "• Web UI:\n%s", strings.Join(urls, "\n"))
 	return sb.String()
+}
+
+// webURL is http://ip:port/, without the port when it is the default 80.
+func webURL(ip, port string) string {
+	if port == "80" {
+		return "http://" + ip + "/"
+	}
+	return "http://" + net.JoinHostPort(ip, port) + "/"
 }
 
 func ago(t, now time.Time) string {
