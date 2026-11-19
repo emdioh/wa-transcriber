@@ -1,0 +1,5 @@
+bssid / frequency / signal level / flags / ssid
+02:00:00:00:00:00	2437	-45	[WPA2-PSK-CCMP][ESS]	home-wifi
+02:00:00:00:01:00	5180	-72	[WPA2-PSK-CCMP][ESS]	home-wifi
+02:00:00:00:02:00	2412	-80	[WPA2-PSK-CCMP][ESS]	office
+02:00:00:00:03:00	2412	-90	[ESS]	cafe-open

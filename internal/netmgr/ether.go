@@ -96,13 +96,19 @@ func (e *Ethernet) takeCancel() func() {
 }
 
 // tryDHCP runs one bounded udhcpc attempt and reports whether a lease was
-// obtained. -n makes udhcpc exit (0/1) instead of retrying in the
-// foreground, so the DHCPTimeout is the outer bound of the attempt.
+// obtained.
 func (e *Ethernet) tryDHCP(ctx context.Context) bool {
-	dctx, cancel := context.WithTimeout(ctx, e.DHCPTimeout)
+	return dhcpLease(ctx, e.Runner, e.IfName, e.DHCPTimeout)
+}
+
+// dhcpLease runs one bounded udhcpc attempt on ifname. -n makes udhcpc exit
+// (0/1) instead of retrying in the foreground, so timeout is the outer bound
+// of the attempt.
+func dhcpLease(ctx context.Context, r Runner, ifname string, timeout time.Duration) bool {
+	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	_, err := e.Runner.Run(dctx, "udhcpc",
-		"-n", "-i", e.IfName, "-f", "-q", "-t", "5", "-T", "3",
+	_, err := r.Run(dctx, "udhcpc",
+		"-n", "-i", ifname, "-f", "-q", "-t", "5", "-T", "3",
 		"-s", "/usr/share/udhcpc/default.script")
 	return err == nil
 }

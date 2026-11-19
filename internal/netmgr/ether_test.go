@@ -18,25 +18,31 @@ var (
 )
 
 type fakeRunner struct {
-	mu     sync.Mutex
-	calls  []string
-	script map[string][]error
+	mu      sync.Mutex
+	calls   []string
+	script  map[string][]error
+	outputs map[string][]string
 }
 
 func newFakeRunner(script map[string][]error) *fakeRunner {
-	return &fakeRunner{script: script}
+	return &fakeRunner{script: script, outputs: map[string][]string{}}
 }
 
 func (f *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, name+" "+strings.Join(args, " "))
-	if list := f.script[name]; len(list) > 0 {
-		err := list[0]
-		f.script[name] = list[1:]
-		return nil, err
+	var out []byte
+	if list := f.outputs[name]; len(list) > 0 {
+		out = []byte(list[0])
+		f.outputs[name] = list[1:]
 	}
-	return nil, nil
+	var err error
+	if list := f.script[name]; len(list) > 0 {
+		err = list[0]
+		f.script[name] = list[1:]
+	}
+	return out, err
 }
 
 func (f *fakeRunner) Start(context.Context, string, ...string) (func(), func() error, error) {
