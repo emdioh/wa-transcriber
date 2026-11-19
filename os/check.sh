@@ -36,8 +36,8 @@ PKG="$HERE/package/wa-transcriber"
 for f in Config.in wa-transcriber.mk; do
 	[ -f "$PKG/$f" ] || fail "missing package file $f"
 done
-grep -q 'config BR2_PACKAGE_WAT_WA_TRANSCRIBER' "$PKG/Config.in" ||
-	fail "Config.in does not define BR2_PACKAGE_WAT_WA_TRANSCRIBER"
+grep -q 'config BR2_PACKAGE_WA_TRANSCRIBER' "$PKG/Config.in" ||
+	fail "Config.in does not define BR2_PACKAGE_WA_TRANSCRIBER"
 grep -q 'generic-package' "$PKG/wa-transcriber.mk" ||
 	fail "the package must be a generic-package (it only copies a prebuilt binary)"
 grep -q 'wa-transcriber-linux-armv7' "$PKG/wa-transcriber.mk" ||
@@ -50,7 +50,7 @@ for board in rpi2 bbb; do
 	defconfig="$HERE/configs/wat_${board}_defconfig"
 	[ -f "$defconfig" ] || { fail "missing $defconfig"; continue; }
 
-	grep -q '^BR2_PACKAGE_WAT_WA_TRANSCRIBER=y$' "$defconfig" ||
+	grep -q '^BR2_PACKAGE_WA_TRANSCRIBER=y$' "$defconfig" ||
 		fail "$board: the transcriber package is not enabled"
 	grep -q '^# BR2_TARGET_GENERIC_REMOUNT_ROOTFS_RW is not set$' "$defconfig" ||
 		fail "$board: the root filesystem must stay read-only"
@@ -105,6 +105,7 @@ grep -q 'wa-transcriber -data /data -network managed -listen :80' "$OVL/etc/init
 grep -q 'sysinit:/etc/init.d/rcS' "$OVL/etc/inittab" ||
 	fail "inittab does not run rcS"
 grep -q '^LABEL=DATA' "$OVL/etc/fstab" || fail "fstab does not mount the DATA partition"
+grep -q 'sysfs' "$OVL/etc/fstab" || fail "fstab does not mount /sys (needed by mdev and the network manager)"
 ok "rootfs overlay"
 
 # --- wat.txt template ------------------------------------------------------

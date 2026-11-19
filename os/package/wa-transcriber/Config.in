@@ -1,4 +1,4 @@
-config BR2_PACKAGE_WAT_WA_TRANSCRIBER
+config BR2_PACKAGE_WA_TRANSCRIBER
 	bool "wa-transcriber"
 	help
 	  The wa-transcriber binary, copied from the Go cross-build

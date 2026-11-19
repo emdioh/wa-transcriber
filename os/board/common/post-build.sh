@@ -14,9 +14,12 @@ TARGET_DIR="$1"
 # the process can start and show the problem in the web UI.
 mkdir -p "$TARGET_DIR/data"
 
-# Read-only root: no default password-based getty, no network manager from
-# the distro, nothing else claims the interfaces.
-rm -f "$TARGET_DIR/etc/init.d/S40network" 2>/dev/null || true
+# Read-only root: no network manager from the distro and, above all, no
+# distro dnsmasq: the setup AP starts its own (port 53/67 would clash).
+rm -f "$TARGET_DIR/etc/init.d/S40network" "$TARGET_DIR/etc/init.d/S80dnsmasq" 2>/dev/null || true
+
+# wpa_supplicant is driven by the binary, never by a distro init script.
+rm -f "$TARGET_DIR/etc/init.d/S45wpa_supplicant" "$TARGET_DIR/etc/init.d/S95wpa_supplicant" 2>/dev/null || true
 
 # Keep the image small: no docs, no locales.
 rm -rf "$TARGET_DIR/usr/share/man" "$TARGET_DIR/usr/share/doc" \
