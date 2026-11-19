@@ -90,7 +90,10 @@ whole card. Restore the two files from your backup instead; without
 
 ## Changing the configuration
 
-- Board configuration: `configs/wat_<board>_defconfig`
+- Board configuration: `configs/wat_<board>_defconfig`. Two deliberate
+  differences from Buildroot's own defconfigs: U-Boot is fetched from GitHub
+  (`BR2_TARGET_UBOOT_CUSTOM_TARBALL`) because `ftp.denx.de` hangs on IPv6
+  from some networks, and the toolchain is musl.
   (`make -C os menuconfig-<board>` to explore, then `savedefconfig`).
 - Kernel drivers: `board/common/linux.fragment`.
 - Busybox applets: `board/common/busybox.fragment`.

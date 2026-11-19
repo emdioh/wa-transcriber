@@ -35,8 +35,11 @@ BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 # Bootloader: U-Boot with SPL, as Buildroot's beaglebone_defconfig
 BR2_TARGET_UBOOT=y
 BR2_TARGET_UBOOT_BUILD_SYSTEM_KCONFIG=y
-BR2_TARGET_UBOOT_CUSTOM_VERSION=y
-BR2_TARGET_UBOOT_CUSTOM_VERSION_VALUE="2023.10"
+# U-Boot comes from GitHub: the upstream ftp.denx.de mirror is unreliable
+# and hangs on IPv6 from some networks. Same release as Buildroot's
+# beaglebone_defconfig.
+BR2_TARGET_UBOOT_CUSTOM_TARBALL=y
+BR2_TARGET_UBOOT_CUSTOM_TARBALL_LOCATION="$(call github,u-boot,u-boot,v2023.10)/u-boot-v2023.10.tar.gz"
 BR2_TARGET_UBOOT_BOARD_DEFCONFIG="am335x_evm"
 BR2_TARGET_UBOOT_NEEDS_DTC=y
 BR2_TARGET_UBOOT_NEEDS_OPENSSL=y

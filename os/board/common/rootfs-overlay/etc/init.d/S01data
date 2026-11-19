@@ -40,11 +40,15 @@ wait_for_block() {
 
 if ! wait_for_block "$datadev"; then
 	log "no partition 3 on $disk, creating it"
-	# start=(first free), size=rest of the disk, type=83 (Linux)
-	if ! printf ',+,83\n' | sfdisk --append --no-reread "$disk"; then
+	# start=(first free), size=rest of the disk, type=83 (Linux).
+	# Let sfdisk re-read the table itself (it adds the partition with the
+	# BLKPG ioctl, which works while the disk is in use and mounted).
+	if ! printf ',+,83\n' | sfdisk --append "$disk"; then
 		log "sfdisk failed, /data stays unmounted"
 		exit 0
 	fi
+	# Belt and braces: if the ioctl path did not create the node, ask the
+	# kernel to re-read the table (may fail with EBUSY, hence "|| true").
 	blockdev --rereadpt "$disk" 2>/dev/null || true
 	mdev -s 2>/dev/null || true
 	if ! wait_for_block "$datadev"; then
