@@ -18,10 +18,11 @@ var (
 )
 
 type fakeRunner struct {
-	mu      sync.Mutex
-	calls   []string
-	script  map[string][]error
-	outputs map[string][]string
+	mu       sync.Mutex
+	calls    []string
+	script   map[string][]error
+	outputs  map[string][]string
+	startErr error
 }
 
 func newFakeRunner(script map[string][]error) *fakeRunner {
@@ -45,8 +46,14 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte
 	return out, err
 }
 
-func (f *fakeRunner) Start(context.Context, string, ...string) (func(), func() error, error) {
-	return nil, nil, errors.New("Start not used")
+func (f *fakeRunner) Start(_ context.Context, name string, args ...string) (func(), func() error, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, name+" "+strings.Join(args, " "))
+	if f.startErr != nil {
+		return nil, nil, f.startErr
+	}
+	return func() {}, func() error { return nil }, nil
 }
 
 func (f *fakeRunner) snapshot() []string {

@@ -1,0 +1,9 @@
+Station 02:00:00:00:00:01 (on wlan0)
+	inactive time:	120 ms
+	rx bytes:	1234
+	tx bytes:	5678
+	signal:	-50 dBm
+Station 02:00:00:00:00:02 (on wlan0)
+	inactive time:	500 ms
+	rx bytes:	90
+	tx bytes:	200
