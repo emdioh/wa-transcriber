@@ -1,0 +1,19 @@
+# WiFi and watchdog drivers used by the network manager (M5).
+# Built as modules: mdev loads them from /etc/init.d/S90watchdog and the
+# WiFi driver is loaded on demand by the USB bus.
+CONFIG_CFG80211=m
+CONFIG_MAC80211=m
+CONFIG_RFkill=y
+
+# Ralink RT5370 (common cheap dongle) and MediaTek MT7612U.
+CONFIG_RT2X00=m
+CONFIG_RT2800USB=m
+CONFIG_RT2800_LIB=m
+CONFIG_MT76_CORE=m
+CONFIG_MT76_USB=m
+CONFIG_MT76x2_COMMON=m
+CONFIG_MT76x2U=m
+
+# Watchdogs: Raspberry Pi (bcm2835) and BeagleBone Black (omap).
+CONFIG_BCM2835_WDT=m
+CONFIG_OMAP_WDT=m

@@ -1,0 +1,17 @@
+#!/bin/sh
+#
+# Load the hardware watchdog driver. The wa-transcriber binary opens
+# /dev/watchdog and pets it once per second; if the process hangs (or is
+# stopped), the board reboots. started from inittab.
+
+case "$1" in
+start)
+	for m in bcm2835_wdt omap_wdt; do
+		modprobe "$m" 2>/dev/null && break
+	done
+	[ -c /dev/watchdog ] || echo "S90watchdog: no /dev/watchdog"
+	;;
+stop)
+	# Nothing to stop: the binary closes the device (which disarms it).
+	;;
+esac

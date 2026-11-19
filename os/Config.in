@@ -1,0 +1,5 @@
+menu "wa-transcriber"
+
+source "$BR2_EXTERNAL_WAT_PATH/package/wa-transcriber/Config.in"
+
+endmenu

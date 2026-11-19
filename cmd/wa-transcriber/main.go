@@ -24,6 +24,7 @@ import (
 	"github.com/emdioh/wa-transcriber/internal/status"
 	"github.com/emdioh/wa-transcriber/internal/transcribe"
 	"github.com/emdioh/wa-transcriber/internal/wa"
+	"github.com/emdioh/wa-transcriber/internal/watchdog"
 	"github.com/emdioh/wa-transcriber/internal/web"
 )
 
@@ -49,6 +50,7 @@ func run() error {
 	logLevel := flag.String("log-level", envOr("WAT_LOG_LEVEL", "info"), "debug, info, warn or error (env WAT_LOG_LEVEL)")
 	listen := flag.String("listen", envOr("WAT_LISTEN", ":80"), "web UI address, empty to disable (env WAT_LISTEN)")
 	networkMode := flag.String("network", envOr("WAT_NETWORK", "none"), "network management: none or managed (env WAT_NETWORK)")
+	watchdogDev := flag.String("watchdog", os.Getenv("WAT_WATCHDOG"), "hardware watchdog device, empty to disable (env WAT_WATCHDOG)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -170,6 +172,17 @@ func run() error {
 				log.Error("web UI stopped", "addr", *listen, "err", err)
 			}
 		}()
+	}
+
+	// A hung process stops petting the watchdog and the board reboots: the
+	// only recovery path on a device without a keyboard.
+	if *watchdogDev != "" {
+		if wd, err := watchdog.Open(*watchdogDev, log); err != nil {
+			log.Warn("watchdog not available, continuing without it", "device", *watchdogDev, "err", err)
+		} else {
+			log.Info("hardware watchdog armed", "device", *watchdogDev)
+			go wd.Run(ctx)
+		}
 	}
 
 	go func() {

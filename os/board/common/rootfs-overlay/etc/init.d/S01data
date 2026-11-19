@@ -1,0 +1,72 @@
+#!/bin/sh
+#
+# Create and mount the DATA partition on first boot.
+#
+# The image ships with two partitions: boot (FAT) and root (ext4, read-only).
+# The rest of the card becomes DATA (ext4, label DATA) the first time the
+# device boots, so the image stays small and the card can be of any size.
+#
+# Must be idempotent: a power cut at any point must not brick the card.
+# Called from rcS before anything writes to /data.
+
+log() { echo "S01data: $*"; }
+
+# Root device, e.g. /dev/mmcblk0p2 or /dev/sda2.
+rootdev=$(awk '$2 == "/" { print $1; exit }' /proc/mounts)
+case "$rootdev" in
+/dev/mmcblk*p[0-9]*) disk=${rootdev%p[0-9]*}; partnum=${rootdev##*p} ;;
+/dev/*[0-9]) disk=${rootdev%[0-9]}; partnum=${rootdev##*[!0-9]} ;;
+*)
+	log "cannot tell the SD card from root device '$rootdev', /data stays unmounted"
+	exit 0
+	;;
+esac
+
+datadev="${disk}"
+if [ "${disk#/dev/mmcblk}" != "${disk}" ]; then
+	datadev="${disk}p3"
+else
+	datadev="${disk}3"
+fi
+
+wait_for_block() {
+	i=0
+	while [ ! -b "$1" ] && [ "$i" -lt 50 ]; do
+		sleep 0.2
+		i=$((i + 1))
+	done
+	[ -b "$1" ]
+}
+
+if ! wait_for_block "$datadev"; then
+	log "no partition 3 on $disk, creating it"
+	# start=(first free), size=rest of the disk, type=83 (Linux)
+	if ! printf ',+,83\n' | sfdisk --append --no-reread "$disk"; then
+		log "sfdisk failed, /data stays unmounted"
+		exit 0
+	fi
+	blockdev --rereadpt "$disk" 2>/dev/null || true
+	mdev -s 2>/dev/null || true
+	if ! wait_for_block "$datadev"; then
+		log "$datadev did not appear, /data stays unmounted"
+		exit 0
+	fi
+fi
+
+# A partition that exists but carries no filesystem (power cut during the
+# first boot) is formatted here; an existing DATA filesystem is never
+# touched.
+if ! blkid "$datadev" | grep -q 'LABEL="DATA"'; then
+	log "formatting $datadev as DATA"
+	if ! mkfs.ext4 -q -L DATA "$datadev"; then
+		log "mkfs.ext4 failed, /data stays unmounted"
+		exit 0
+	fi
+fi
+
+mkdir -p /data
+if ! mount /data; then
+	log "mounting /data failed"
+	exit 0
+fi
+log "DATA mounted from $datadev"

@@ -1,0 +1,5 @@
+# Buildroot itself (pinned download), per-board outputs and the copied binary.
+buildroot-*/
+buildroot-*.tar.gz
+output/
+prebuilt/

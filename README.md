@@ -48,7 +48,28 @@ docker run -it -p 8080:80 -v wa-data:/data wa-transcriber
 | `-pair-phone` | `WAT_PAIR_PHONE` | (QR) |
 | `-log-level` | `WAT_LOG_LEVEL` | `info` |
 | `-listen` | `WAT_LISTEN` | `:80` (empty: no web UI) |
+| `-watchdog` | `WAT_WATCHDOG` | empty (disabled); the images pass `/dev/watchdog` |
 | `-network` | `WAT_NETWORK` | `none` (`managed` on the image) |
+
+## Flashing an SD card
+
+Images for the Raspberry Pi 2 and the BeagleBone Black are built with
+Buildroot ([os/README.md](os/README.md)):
+
+```bash
+make -C os check          # validates the build tree, a few seconds
+make -C os rpi2           # os/output/rpi2/images/sdcard.img
+make -C os bbb            # os/output/bbb/images/sdcard.img
+sudo dd if=os/output/rpi2/images/sdcard.img of=/dev/sdX bs=4M conv=fsync status=progress
+```
+
+Before ejecting, edit `wat.txt` on the small FAT partition (`setup_ap_key`,
+`country`). First boot: the board publishes `WA-Setup-XXXX`, a phone joins
+it and the captive portal opens the web UI; then link WhatsApp and add your
+home WiFi. The root filesystem is read-only and `/data` is created on first
+boot, so power cuts are safe. Reflashing erases `/data`: back up
+`session.db*` and `config.json` first (without the session you must pair
+again).
 
 ## Network
 

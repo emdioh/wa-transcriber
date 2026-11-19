@@ -1,0 +1,9 @@
+# Raspberry Pi boot configuration (boot partition).
+arm_control=0x200
+kernel=zImage
+arm_64bit=0
+gpu_mem=16
+disable_overscan=1
+dtparam=audio=off
+# Keep the serial console off: ttyAMA0 is not needed and costs boot time.
+enable_uart=0

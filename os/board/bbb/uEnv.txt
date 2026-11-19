@@ -1,0 +1,3 @@
+# U-Boot environment for the BeagleBone Black (not used when booting through
+# extlinux, kept for compatibility with the Buildroot default flow).
+uname_r=

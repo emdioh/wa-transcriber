@@ -1,0 +1,12 @@
+config BR2_PACKAGE_WAT_WA_TRANSCRIBER
+	bool "wa-transcriber"
+	help
+	  The wa-transcriber binary, copied from the Go cross-build
+	  (dist/wa-transcriber-linux-armv7 in the repository, refreshed by
+	  "make -C os prebuilt").
+
+	  This package does not build Go inside Buildroot on purpose: the
+	  binary is a static, cgo-free build and Buildroot's Go version lags
+	  behind the one the project needs.
+
+	  https://github.com/emdioh/wa-transcriber

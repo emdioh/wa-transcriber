@@ -1,0 +1,12 @@
+# <file system>	<mount point>	<type>	<options>		<dump>	<pass>
+/dev/root	/		ext4	ro,noatime		0	1
+proc		/proc		proc	defaults		0	0
+devpts		/dev/pts	devpts	defaults,gid=5,mode=620	0	0
+tmpfs		/dev/shm	tmpfs	mode=1777		0	0
+tmpfs		/tmp		tmpfs	defaults,nosuid,nodev	0	0
+tmpfs		/run		tmpfs	defaults,nosuid,nodev	0	0
+tmpfs		/var/log	tmpfs	defaults,nosuid,nodev	0	0
+tmpfs		/var/lib/misc	tmpfs	defaults,nosuid,nodev	0	0
+# The DATA partition is created on first boot by /etc/init.d/S01data and
+# mounted here from then on.
+LABEL=DATA	/data		ext4	noatime,nodev,nosuid	0	2

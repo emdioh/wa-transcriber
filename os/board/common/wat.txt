@@ -1,0 +1,18 @@
+# wa-transcriber settings for the first boot.
+#
+# This file lives on the boot partition (FAT), so it can be edited from any
+# computer: plug the SD card in, open the small FAT partition and edit the
+# values below. Changes apply at the next boot.
+#
+# setup_ap_key: WPA2 passphrase of the setup access point "WA-Setup-XXXX"
+#                (at least 8 characters; longer than 8 is fine, but some
+#                phones reject passphrases over 63). If this line is missing
+#                or too short, the device falls back to "wa-setup-<MAC>" and
+#                logs a warning.
+setup_ap_key=change-me-please
+
+# country: ISO 3166-1 alpha-2 code for the WiFi regulatory domain.
+country=IT
+
+# hostname: mDNS name, <hostname>.local (default wa).
+hostname=wa
