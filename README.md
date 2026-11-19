@@ -2,7 +2,7 @@
 
 A small static binary that links to your WhatsApp account as a companion
 device and transcribes voice notes. Built for headless boards (Raspberry Pi 2,
-BeagleBoard) and Docker.
+BeagleBone Black) and Docker.
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): architecture and the decisions behind it
 - [docs/STATUS.md](docs/STATUS.md): what is done and verified, known limitations
@@ -16,7 +16,7 @@ Requires Go 1.26 (downloaded automatically by the `go` command if older).
 
 ```bash
 make build        # ./wa-transcriber for this machine
-make dist         # dist/: linux armv7 (Pi 2, BeagleBoard), arm64, amd64
+make dist         # dist/: linux armv7 (Pi 2, BeagleBone Black), arm64, amd64
 make test
 ```
 

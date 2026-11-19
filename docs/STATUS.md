@@ -11,8 +11,8 @@ Last update: 2026-11-16.
 | M3 | Transcription + translation (OpenAI, OpenRouter, Gemini) | ✅ done |
 | M3b | Multi-transcriber coordination protocol | ⏳ blocked by M2 |
 | M4 | Web UI | ✅ done |
-| M5 | Network manager (ethernet, WiFi, setup AP, mDNS, clock) | ⏳ not started (needs the Pi + WiFi dongle) |
-| M6 | Buildroot images (Pi 2, BeagleBoard) | ⏳ blocked by M5 |
+| M5 | Network manager (ethernet, WiFi, setup AP, mDNS, clock) | ⏳ not started (needs the Pi / Cubieboard + WiFi dongle) |
+| M6 | Buildroot images (Pi 2, BeagleBone Black) | ⏳ blocked by M5 |
 | M7 | CI, Docker image, releases | ⏳ not started (no hardware needed) |
 | M8 | Small items (reply language, public URL in UI, health check) | ⏳ not started |
 

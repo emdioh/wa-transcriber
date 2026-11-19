@@ -5,7 +5,7 @@ companion device ("linked device"), transcribes voice notes with a cloud
 speech-to-text provider, optionally translates them, and posts the result as
 a quoted reply from the owner's own account. It is controlled with a few
 `!commands` and a small web UI, and is meant to run headless on a minimal
-Linux image (Raspberry Pi 2, BeagleBoard) or in a Docker container.
+Linux image (Raspberry Pi 2, BeagleBone Black) or in a Docker container.
 
 Companion documents: [STATUS.md](STATUS.md) (what is done and verified),
 [PLAN.md](PLAN.md) (remaining milestones, step by step).
@@ -34,9 +34,9 @@ v1, several WhatsApp accounts per device, Internet exposure of the UI.
 
 | # | Decision | Alternatives considered | Why |
 |---|---|---|---|
-| D1 | **Go + whatsmeow** for WhatsApp | WAHA (Docker, Node, Chromium) as in Megachat; Baileys (Node); Python wrappers | whatsmeow is a pure-Go implementation of the multi-device protocol: one static binary of ~18 MB, ~30–50 MB RAM, cross-compiles to ARMv7. WAHA needs Docker + a headless browser, impossible on a Pi 2 / BeagleBoard. |
+| D1 | **Go + whatsmeow** for WhatsApp | WAHA (Docker, Node, Chromium) as in Megachat; Baileys (Node); Python wrappers | whatsmeow is a pure-Go implementation of the multi-device protocol: one static binary of ~18 MB, ~30–50 MB RAM, cross-compiles to ARMv7. WAHA needs Docker + a headless browser, impossible on a Pi 2 / BeagleBone Black. |
 | D2 | **Pure-Go SQLite** (`modernc.org/sqlite`) for the session | `mattn/go-sqlite3` (cgo) | No cgo → `CGO_ENABLED=0` static builds for every architecture without cross toolchains. |
-| D3 | **Cloud transcription** (OpenAI, OpenRouter, Gemini) | whisper.cpp on device | A Pi 2 / BeagleBoard is far too slow for useful local models. Voice notes are Ogg/Opus, which the APIs accept directly: no ffmpeg. |
+| D3 | **Cloud transcription** (OpenAI, OpenRouter, Gemini) | whisper.cpp on device | A Pi 2 / BeagleBone Black is far too slow for useful local models. Voice notes are Ogg/Opus, which the APIs accept directly: no ffmpeg. |
 | D4 | **New repository**, nothing shared with Megachat | Monorepo with the Python client | Megachat is Python and WAHA-based; only behaviour (commands, freshness window, settings shape) was ported, not code. |
 | D5 | **Commands = messages sent by the owner** (`IsFromMe`) | A separate admin number, a bot account | The binary is a linked device of the owner's account, so "sent by me" is exactly "the owner". Contacts can never trigger anything. |
 | D6 | **Admin commands only in self chats** ("Message yourself", or a group whose only member is the owner) | Any chat | Replies are visible to everyone in the chat; `!status` contains the device IP, `!password` a password. |

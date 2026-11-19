@@ -344,7 +344,8 @@ every network; WiFi is configured from the web UI.
 dongle):
 
 1. On the Raspberry Pi 2 with **Raspberry Pi OS Lite** (fine for M5
-   development; M6 replaces it), plug the WiFi dongle and record:
+   development; M6 replaces it) and on the **Cubieboard** (Allwinner A10,
+   ARMv7, 1 GB; Debian/Armbian image), plug the WiFi dongle and record:
    `lsusb`, `iw list | grep -A 10 "Supported interface modes"`, the kernel
    driver (`readlink /sys/class/net/wlan0/device/driver`).
 2. **Pass** if `AP` is listed and a 10-minute manual hostapd test (step 5's
@@ -502,8 +503,10 @@ it changes interfaces and binds port 53/67/5353).
 
 ### Exit criteria
 
-All on the Raspberry Pi 2 + dongle running Raspberry Pi OS Lite with the
-binary in managed mode as a systemd service; each scenario repeated 3 times:
+All with the binary in managed mode as a systemd service; each scenario
+repeated 3 times on the Raspberry Pi 2 + dongle (Raspberry Pi OS Lite) and
+on the Cubieboard (Debian/Armbian, onboard ethernet + the same or a second
+dongle):
 
 1. Cold boot, no saved networks, no cable → `WA-Setup-XXXX` visible within
    60 s; a phone joins with the setup key; the captive page opens by itself
@@ -526,19 +529,20 @@ binary in managed mode as a systemd service; each scenario repeated 3 times:
 
 ### Gate out
 
-M5 done on the Pi 2 under Raspberry Pi OS. The BeagleBoard is validated in
-M6. Record the dongle and the results in `docs/hardware.md`.
+M5 done on the Pi 2 (Raspberry Pi OS) and the Cubieboard (Debian/Armbian).
+The BeagleBone Black is validated in M6. Record the dongles and the results
+in `docs/hardware.md`.
 
 ---
 
 ## M6 — Buildroot images
 
-Goal: flashable SD-card images for the Raspberry Pi 2 and the BeagleBoard:
-boot in < 30 s to a working device, read-only root, data on its own
+Goal: flashable SD-card images for the Raspberry Pi 2 and the BeagleBone
+Black: boot in < 30 s to a working device, read-only root, data on its own
 partition, survives power cuts.
 
-**Gate in**: M5 exit criteria met; the exact BeagleBoard model is known
-(original BeagleBoard rev B/C, BeagleBoard-xM, or BeagleBone).
+**Gate in**: M5 exit criteria met. The second board is a **BeagleBone
+Black** (AM3358, ARMv7, 512 MB RAM, microSD boot).
 
 ### Steps
 
@@ -549,12 +553,11 @@ partition, survives power cuts.
 2. **Defconfigs**:
    - `os/configs/wat_rpi2_defconfig`, starting from Buildroot's
      `raspberrypi2_defconfig`;
-   - BeagleBoard: start from the in-tree defconfig for that board if one
-     exists (`beaglebone_defconfig` for a BeagleBone). For the original
-     BeagleBoard / -xM there is none: use the kernel `omap2plus_defconfig`,
-     U-Boot `omap3_beagle_defconfig`, device tree `omap3-beagle.dtb` /
-     `omap3-beagle-xm.dtb`. Get a serial console working first (3.3 V
-     USB-UART): it is the only way to debug boot on those boards.
+   - BeagleBone Black: start from Buildroot's in-tree
+     `beaglebone_defconfig` (kernel `omap2plus_defconfig`, U-Boot for
+     `am335x_boneblack`, device tree `am335x-boneblack.dtb`). The board
+     exposes a serial console over its USB client port; verify it early
+     because it is the main way to debug boot.
    - Both: `BR2_TOOLCHAIN_BUILDROOT_MUSL`, busybox init, `/dev` via
      devtmpfs + mdev.
 3. **Packages** (enable in both defconfigs): busybox (with `ip`, `udhcpc`,
@@ -599,9 +602,9 @@ partition, survives power cuts.
 
 - Both images build from a clean checkout with one command each.
 - Compressed image < 64 MB; boot to web UI reachable < 30 s on the Pi 2
-  (< 45 s on the BeagleBoard).
+  (< 45 s on the BeagleBone Black).
 - Idle RAM: wa-transcriber RSS < 60 MB; whole system < 100 MB used on the
-  Pi 2 and fits on a 128 MB/256 MB BeagleBoard with ≥ 30 MB free.
+  Pi 2 and the 512 MB BeagleBone Black with ≥ 30 MB free.
 - All M5 scenarios pass on **both** boards running the images.
 - Power-cut test: 50 random power cuts (including during pairing and while
   saving settings) → the device always boots, `config.json` and
