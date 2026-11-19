@@ -13,7 +13,7 @@ Last update: 2026-11-19.
 | M4 | Web UI | ✅ done |
 | M5 | Network manager, code (ethernet, WiFi, setup AP, mDNS, clock) | ✅ done (unit tests with scripted fakes) |
 | M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
-| M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 in progress (code); runtime criteria need M5b |
+| M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 images build (Pi 2 38.6 MB gz, BBB 47.8 MB gz); runtime criteria need the boards |
 | M7 | CI, Docker image, releases | ⏳ not started (no hardware needed) |
 | M8 | Small items (reply language, public URL in UI, health check) | ⏳ not started |
 
@@ -32,6 +32,9 @@ Last update: 2026-11-19.
 - `!reset` end to end (logout + erase + re-exec).
 - Self-chat detection for single-member groups.
 - The Docker image (never built: no Docker in the development sandbox).
+- The images themselves: both build and their partitions were inspected offline
+  (contents, init scripts, binary present), but neither has ever been booted.
+  The runtime criteria in M6 and every scenario in M5b need the boards.
 - Everything in `internal/netmgr` beyond unit tests: the managed mode has never
   run on real hardware (no accessible network stack in the sandbox). The
   commands it issues are tested with scripted fakes only. Milestone **M5b**

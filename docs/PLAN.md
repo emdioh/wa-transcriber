@@ -593,6 +593,15 @@ partition, survives power cuts.
 hardware validation is M5b and does *not* block building images). The second
 board is a **BeagleBone Black** (AM3358, ARMv7, 512 MB RAM, microSD boot).
 
+**Status (2026-11-19): build side done.** `os/` holds the BR2_EXTERNAL tree
+pinned to Buildroot 2024.02.9; `make -C os check` validates it and
+`make -C os rpi2|bbb` produce `os/_output/<board>/images/sdcard.img`
+(192 MB raw: 38.6 MB gzipped for the Pi 2, 47.8 MB for the BeagleBone
+Black). Both images were inspected offline: boot partition contents, the
+read-only root filesystem, the init scripts and the binary in
+`/usr/bin/wa-transcriber`. Nothing has been booted yet; the runtime exit
+criteria below need the boards.
+
 ### Steps
 
 1. **Buildroot tree**: use the latest Buildroot **LTS** release; add it as a

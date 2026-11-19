@@ -42,8 +42,19 @@ make -C os bbb       # -> os/_output/bbb/images/sdcard.img
 ```
 
 The first build compiles a toolchain, the kernel and U-Boot and takes about
-an hour on 12 cores; later builds reuse the download cache in `os/_buildroot/` and the per-board
-`os/_output/<board>/` trees.
+an hour on 12 cores; later builds reuse the download cache in
+`os/_buildroot/` and the per-board `os/_output/<board>/` trees.
+
+Measured with Buildroot 2024.02.9 on 12 cores:
+
+| Board | `sdcard.img` | gzipped | boot partition |
+|---|---|---|---|
+| Raspberry Pi 2 | 192 MB | 38.6 MB | bootcode.bin, start.elf, fixup.dat, zImage, bcm2709-rpi-2-b.dtb, cmdline.txt, config.txt, wat.txt |
+| BeagleBone Black | 192 MB | 47.8 MB | MLO, u-boot.img, zImage, am335x-boneblack.dtb, extlinux/, wat.txt |
+
+The image is 192 MB regardless of the card size: it is one 32 MB boot
+partition plus a 160 MB root partition; the start of the card stays free for
+the `DATA` partition created at first boot.
 
 What the Makefile does, in order:
 
