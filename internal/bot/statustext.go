@@ -37,6 +37,12 @@ func (b *Bot) statusText() string {
 		sb.WriteString("• Clock: ⚠ not synced when WhatsApp was connected\n")
 	}
 
+	if b.Network != nil {
+		if line := ifaceLine(b.Network.Interfaces()); line != "" {
+			fmt.Fprintf(&sb, "• Interfaces: %s\n", line)
+		}
+	}
+
 	if b.WebPort == "" {
 		sb.WriteString("• Web UI: disabled")
 		return sb.String()
@@ -57,6 +63,24 @@ func (b *Bot) statusText() string {
 	}
 	fmt.Fprintf(&sb, "• Web UI:\n%s", strings.Join(urls, "\n"))
 	return sb.String()
+}
+
+// ifaceLine renders the interfaces like "eth0 192.168.1.40, wlan0 AP WA-Setup-1A2B".
+func ifaceLine(ifaces []NetIface) string {
+	var parts []string
+	for _, i := range ifaces {
+		part := i.Name
+		if i.APClients > 0 || i.SSID == "WA-Setup" {
+			part += " AP " + i.SSID
+		} else if i.SSID != "" {
+			part += " " + i.SSID
+		}
+		if len(i.IPs) > 0 {
+			part += " " + strings.Join(i.IPs, ", ")
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // webURL is http://ip:port/, without the port when it is the default 80.

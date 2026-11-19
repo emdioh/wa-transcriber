@@ -89,6 +89,21 @@ type Messenger interface {
 	IsSelfChat(ctx context.Context, chat types.JID) bool
 }
 
+// NetIface is one network interface as !status shows it.
+type NetIface struct {
+	Name      string
+	Kind      string
+	SSID      string
+	APClients int
+	IPs       []string
+}
+
+// Network is what !status needs from the network manager. Defining it here
+// keeps bot independent of the netmgr package.
+type Network interface {
+	Interfaces() []NetIface
+}
+
 // Voice is a voice note to transcribe.
 type Voice struct {
 	Chat  types.JID
@@ -117,6 +132,8 @@ type Bot struct {
 	// Reset unlinks WhatsApp, erases everything and restarts the process.
 	Reset func(ctx context.Context) error
 	Addrs func() []status.Addr
+	// Network is optional: without it !status lists addresses only.
+	Network Network
 	// WebPort is the web UI port ("" = web UI disabled).
 	WebPort string
 	Version string

@@ -114,6 +114,7 @@ func run() error {
 		Status:      st,
 		Transcriber: tr,
 		Addrs:       status.Addresses,
+		Network:     netAdapter{nm},
 		WebPort:     listenPort(*listen),
 		Version:     version,
 		Started:     started,
@@ -220,6 +221,22 @@ func listenPort(addr string) string {
 		return port
 	}
 	return "80"
+}
+
+// netAdapter exposes the network manager to the bot without making bot depend
+// on the netmgr package.
+type netAdapter struct{ m netmgr.Manager }
+
+func (a netAdapter) Interfaces() []bot.NetIface {
+	st := a.m.Status()
+	out := make([]bot.NetIface, 0, len(st.Interfaces))
+	for _, i := range st.Interfaces {
+		out = append(out, bot.NetIface{
+			Name: i.Name, Kind: string(i.Kind), SSID: i.SSID,
+			APClients: i.APClients, IPs: i.IPs,
+		})
+	}
+	return out
 }
 
 // parseBuildTime accepts RFC 3339 or a Unix timestamp ("", "0" or garbage
