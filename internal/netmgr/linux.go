@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emdioh/wa-transcriber/internal/netmgr/mdns"
 	"github.com/emdioh/wa-transcriber/internal/status"
 )
 
@@ -91,7 +92,46 @@ func (m *managed) Start(ctx context.Context) error {
 	}
 	m.log.Info("network manager: interfaces", "ethernet", len(m.eths), "wifi", len(m.wifis))
 	go m.loop(ctx)
+	go m.serveMDNS(ctx)
 	return nil
+}
+
+// serveMDNS answers wa.local on every interface as soon as it has an address.
+func (m *managed) serveMDNS(ctx context.Context) {
+	r := &mdns.Responder{Name: "wa"}
+	ifaces := func() []mdns.Iface {
+		byName := map[string]*mdns.Iface{}
+		for _, a := range m.addrs() {
+			ifc, err := net.InterfaceByName(a.Interface)
+			if err != nil {
+				continue
+			}
+			ip := net.ParseIP(a.IP).To4()
+			if ip == nil {
+				continue
+			}
+			byName[a.Interface] = &mdns.Iface{Index: ifc.Index, IP: ip, Name: a.Interface}
+		}
+		out := make([]mdns.Iface, 0, len(byName))
+		for _, i := range byName {
+			out = append(out, *i)
+		}
+		return out
+	}
+	for ctx.Err() == nil {
+		if len(ifaces()) == 0 {
+			if !sleepCtx(ctx, m.pollInterval) {
+				return
+			}
+			continue
+		}
+		if err := mdns.Listen(ctx, r, ifaces, m.log); err != nil && ctx.Err() == nil {
+			m.log.Error("network manager: mdns", "err", err)
+			if !sleepCtx(ctx, m.pollInterval) {
+				return
+			}
+		}
+	}
 }
 
 // discover fills the interface maps from sysfs. It is separate from Start so
