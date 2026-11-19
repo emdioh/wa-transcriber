@@ -80,6 +80,9 @@ type Options struct {
 	Network netmgr.Manager
 	// NetworkManaged is false in Docker / on dev machines.
 	NetworkManaged bool
+	// InAPMode reports whether the setup access point is running. Captive
+	// portal responses and the Host redirect are only active then.
+	InAPMode func() bool
 }
 
 // Server serves the UI.
@@ -132,7 +135,9 @@ func parsePages() map[string]*template.Template {
 }
 
 // Handler returns the full handler chain.
-func (s *Server) Handler() http.Handler { return securityHeaders(s.checkOrigin(s.mux)) }
+func (s *Server) Handler() http.Handler {
+	return securityHeaders(s.checkOrigin(s.captivePortal(s.mux)))
+}
 
 // ListenAndServe serves on addr until ctx ends.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
