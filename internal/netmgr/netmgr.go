@@ -75,11 +75,17 @@ type Manager interface {
 
 // New returns the manager for mode ("none" or "managed").
 func New(mode string) (Manager, error) {
+	return NewWithData(mode, "/data")
+}
+
+// NewWithData is New with an explicit data directory (managed mode keeps its
+// saved WiFi networks there).
+func NewWithData(mode, dataDir string) (Manager, error) {
 	switch mode {
 	case "none":
 		return &none{addrs: status.Addresses}, nil
 	case "managed":
-		return nil, fmt.Errorf("network mode %q is not implemented yet", mode)
+		return NewManaged(dataDir, nil)
 	default:
 		return nil, fmt.Errorf("unknown -network mode %q (want none or managed)", mode)
 	}

@@ -14,15 +14,19 @@ func TestNewModes(t *testing.T) {
 			t.Errorf("New(%q) accepted an invalid mode", mode)
 		}
 	}
-	if _, err := New("managed"); err == nil {
-		t.Fatal("New(managed) must fail until the managed implementation exists")
-	}
 	m, err := New("none")
 	if err != nil {
 		t.Fatalf("New(none): %v", err)
 	}
 	if err := m.Start(context.Background()); err != nil {
 		t.Fatalf("none.Start: %v", err)
+	}
+	mg, err := NewWithData("managed", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewWithData(managed): %v", err)
+	}
+	if _, ok := mg.(*managed); !ok {
+		t.Fatalf("managed returned %T", mg)
 	}
 }
 
