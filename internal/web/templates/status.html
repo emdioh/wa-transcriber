@@ -33,6 +33,7 @@
       {{range .Addrs}}<dt>{{.Interface}}</dt><dd><code>{{.IP}}</code></dd>{{else}}<dt>Network</dt><dd>no address</dd>{{end}}
       <dt>Memory</dt><dd>{{printf "%.1f" .HeapMB}} MB heap, {{printf "%.1f" .SysMB}} MB from the OS</dd>
       <dt>Log level</dt><dd>{{.LogLevel}}</dd>
+      {{if not .Snap.ClockSynced}}<dt>Clock</dt><dd>⚠ not synced when WhatsApp was connected</dd>{{end}}
     </dl>
   </div>
 </section>

@@ -16,6 +16,7 @@ type Tracker struct {
 	lastMessage       time.Time
 	lastTranscription time.Time
 	pairingCode       string // QR payload or pairing code while unpaired
+	clockSynced       bool
 }
 
 // Snapshot is a consistent copy of the tracker.
@@ -26,9 +27,12 @@ type Snapshot struct {
 	LastMessage       time.Time
 	LastTranscription time.Time
 	PairingCode       string
+	// ClockSynced is false when the clock was still off when WhatsApp was
+	// connected (a warning on the Status page).
+	ClockSynced bool
 }
 
-func New(now time.Time) *Tracker { return &Tracker{started: now} }
+func New(now time.Time) *Tracker { return &Tracker{started: now, clockSynced: true} }
 
 func (t *Tracker) SetConnected(v bool) {
 	t.mu.Lock()
@@ -56,6 +60,12 @@ func (t *Tracker) Transcribed(at time.Time) {
 	t.mu.Unlock()
 }
 
+func (t *Tracker) SetClockSynced(v bool) {
+	t.mu.Lock()
+	t.clockSynced = v
+	t.mu.Unlock()
+}
+
 func (t *Tracker) SetPairingCode(c string) {
 	t.mu.Lock()
 	t.pairingCode = c
@@ -72,6 +82,7 @@ func (t *Tracker) Snapshot() Snapshot {
 		LastMessage:       t.lastMessage,
 		LastTranscription: t.lastTranscription,
 		PairingCode:       t.pairingCode,
+		ClockSynced:       t.clockSynced,
 	}
 }
 

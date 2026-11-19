@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -26,8 +27,13 @@ import (
 	"github.com/emdioh/wa-transcriber/internal/web"
 )
 
-// version is set at build time with -ldflags "-X main.version=...".
-var version = "dev"
+// version and buildTime are set at build time with
+// -ldflags "-X main.version=... -X main.buildTime=...". buildTime guards
+// against a device clock that is not set yet (a bad clock breaks WhatsApp).
+var (
+	version   = "dev"
+	buildTime string
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -162,6 +168,15 @@ func run() error {
 	}
 
 	go func() {
+		if !netmgr.WaitClock(ctx, netmgr.ClockCheck{
+			Managed:   *networkMode == "managed",
+			Now:       time.Now,
+			BuildTime: parseBuildTime(buildTime),
+			Synced:    netmgr.NTPSynced,
+			Log:       log,
+		}) {
+			st.SetClockSynced(false)
+		}
 		if err := client.Run(ctx, *pairPhone); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("WhatsApp connection failed", "err", err)
 			stop()
@@ -204,6 +219,18 @@ func listenPort(addr string) string {
 		return port
 	}
 	return "80"
+}
+
+// parseBuildTime accepts RFC 3339 or a Unix timestamp ("", "0" or garbage
+// gives the zero time, which disables the check).
+func parseBuildTime(s string) time.Time {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 {
+		return time.Unix(n, 0)
+	}
+	return time.Time{}
 }
 
 func envOr(name, def string) string {

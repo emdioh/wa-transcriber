@@ -33,6 +33,9 @@ func (b *Bot) statusText() string {
 	fmt.Fprintf(&sb, "• Transcription: %s, global %s, %d chat override(s)\n",
 		configured, onoff(tr.Global), len(tr.Chats))
 	fmt.Fprintf(&sb, "• Uptime: %s\n", now.Sub(s.Started).Round(time.Second))
+	if !s.ClockSynced {
+		sb.WriteString("• Clock: ⚠ not synced when WhatsApp was connected\n")
+	}
 
 	if b.WebPort == "" {
 		sb.WriteString("• Web UI: disabled")
