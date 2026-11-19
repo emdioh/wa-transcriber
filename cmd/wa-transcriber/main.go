@@ -78,9 +78,12 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	nm, err := netmgr.New(*networkMode)
+	nm, err := netmgr.NewWithData(*networkMode, *dataDir)
 	if err != nil {
 		return err
+	}
+	if *networkMode == "managed" && os.Geteuid() != 0 {
+		log.Warn("network mode managed needs root: it changes interfaces and binds ports 53/67")
 	}
 	if err := nm.Start(ctx); err != nil {
 		return err
