@@ -70,6 +70,11 @@ type Manager interface {
 	SaveNetwork(ssid, passphrase string) error
 	ForgetNetwork(ssid string) error
 	SetAPPolicy(p APPolicy) error
+	APPolicy() APPolicy
+	// SavedNetworks lists the remembered WiFi networks (mode managed only).
+	SavedNetworks() []SavedNetwork
+	// InAPMode reports whether the setup access point is running.
+	InAPMode() bool
 	Erase() error
 }
 

@@ -44,6 +44,10 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /transcription", s.auth(s.transcriptionSubmit))
 	m.HandleFunc("POST /transcription/chat", s.auth(s.chatSubmit))
 	m.HandleFunc("GET /network", s.auth(s.networkPage))
+	m.HandleFunc("POST /network/scan", s.auth(s.networkScan))
+	m.HandleFunc("POST /network/connect", s.auth(s.networkConnect))
+	m.HandleFunc("POST /network/forget", s.auth(s.networkForget))
+	m.HandleFunc("POST /network/policy", s.auth(s.networkPolicy))
 	m.HandleFunc("GET /logs", s.auth(s.logsPage))
 	m.HandleFunc("GET /logs.txt", s.auth(s.logsText))
 	m.HandleFunc("POST /logs/level", s.auth(s.logLevel))
@@ -506,18 +510,107 @@ func describeJID(s string) string {
 
 type networkView struct {
 	Managed    bool
+	InAPMode   bool
 	Interfaces []netmgr.Interface
+	Scan       []netmgr.Network
+	ScanAge    string
+	Saved      []netmgr.SavedNetwork
+	Policy     string
+	Policies   []string
 }
 
 func (s *Server) networkPage(w http.ResponseWriter, r *http.Request) {
-	v := networkView{Managed: s.opts.NetworkManaged}
+	v := networkView{Managed: s.opts.NetworkManaged, Policies: []string{"auto", "always", "never"}, Policy: "auto"}
 	switch {
 	case s.opts.Network != nil:
 		v.Interfaces = s.opts.Network.Status().Interfaces
+		v.InAPMode = s.opts.Network.InAPMode()
+		v.Saved = s.opts.Network.SavedNetworks()
+		v.Policy = string(s.opts.Network.APPolicy())
 	case s.opts.Addrs != nil:
 		v.Interfaces = netmgr.StatusFromAddrs(s.opts.Addrs()).Interfaces
 	}
+	s.mu.Lock()
+	if time.Since(s.lastScan) < 2*time.Minute {
+		v.Scan = s.lastScanResult
+		v.ScanAge = agoText(s.lastScan)
+	}
+	s.mu.Unlock()
 	s.render(w, r, "network", "Network", v)
+}
+
+func (s *Server) networkScan(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Network == nil {
+		s.back(w, r, "/network", false, "Network management is off.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	nets, err := s.opts.Network.Scan(ctx)
+	if err != nil {
+		s.back(w, r, "/network", false, "Scan failed: "+err.Error())
+		return
+	}
+	s.mu.Lock()
+	s.lastScanResult = nets
+	s.lastScan = time.Now()
+	s.mu.Unlock()
+	s.back(w, r, "/network", true, fmt.Sprintf("%d networks found.", len(nets)))
+}
+
+func (s *Server) networkConnect(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Network == nil {
+		s.back(w, r, "/network", false, "Network management is off.")
+		return
+	}
+	ssid := strings.TrimSpace(r.PostFormValue("ssid"))
+	pass := r.PostFormValue("passphrase")
+	if ssid == "" {
+		s.back(w, r, "/network", false, "Choose a network.")
+		return
+	}
+	if len(pass) < 8 && r.PostFormValue("secured") == "1" {
+		s.back(w, r, "/network", false, "The passphrase needs at least 8 characters.")
+		return
+	}
+	wasAP := s.opts.Network.InAPMode()
+	if err := s.opts.Network.SaveNetwork(ssid, pass); err != nil {
+		s.back(w, r, "/network", false, "Could not save the network: "+err.Error())
+		return
+	}
+	s.opts.Log.Info("WiFi network saved from the web UI", "ssid", ssid, "in_ap_mode", wasAP)
+	if wasAP {
+		s.render(w, r, "restart", "Switching network",
+			"The device is switching network: reconnect your phone to "+ssid+" and open http://wa.local/")
+		return
+	}
+	s.back(w, r, "/network", true, "Saved. The device will join "+ssid+" within a minute.")
+}
+
+func (s *Server) networkForget(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Network == nil {
+		s.back(w, r, "/network", false, "Network management is off.")
+		return
+	}
+	ssid := strings.TrimSpace(r.PostFormValue("ssid"))
+	if err := s.opts.Network.ForgetNetwork(ssid); err != nil {
+		s.back(w, r, "/network", false, "Could not forget the network: "+err.Error())
+		return
+	}
+	s.back(w, r, "/network", true, "Forgot "+ssid+".")
+}
+
+func (s *Server) networkPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Network == nil {
+		s.back(w, r, "/network", false, "Network management is off.")
+		return
+	}
+	p := netmgr.APPolicy(strings.ToLower(r.PostFormValue("policy")))
+	if err := s.opts.Network.SetAPPolicy(p); err != nil {
+		s.back(w, r, "/network", false, "Unknown policy.")
+		return
+	}
+	s.back(w, r, "/network", true, "Setup access point: "+string(p)+".")
 }
 
 // -- logs -------------------------------------------------------------------

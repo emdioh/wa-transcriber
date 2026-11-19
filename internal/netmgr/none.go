@@ -32,6 +32,15 @@ func (n *none) SaveNetwork(string, string) error        { return errDisabled }
 func (n *none) ForgetNetwork(string) error              { return errDisabled }
 func (n *none) SetAPPolicy(APPolicy) error              { return errDisabled }
 
+// InAPMode is always false in mode none.
+func (n *none) InAPMode() bool { return false }
+
+// APPolicy reports the default policy (none is never used in mode none).
+func (n *none) APPolicy() APPolicy { return APAuto }
+
+// SavedNetworks is empty in mode none.
+func (n *none) SavedNetworks() []SavedNetwork { return nil }
+
 // Erase is a no-op in mode none: there are no saved networks.
 func (n *none) Erase() error { return nil }
 

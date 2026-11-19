@@ -94,6 +94,9 @@ type Server struct {
 	mu       sync.Mutex
 	sessions map[string]session
 	loginMu  sync.Mutex
+
+	lastScan       time.Time
+	lastScanResult []netmgr.Network
 }
 
 type session struct {

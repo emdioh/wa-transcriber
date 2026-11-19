@@ -3,24 +3,83 @@
   <h2>Interfaces</h2>
   {{if .Interfaces}}
   <table>
-    <tr><th>Interface</th><th>Kind</th><th>State</th><th>Addresses</th></tr>
+    <tr><th>Interface</th><th>Kind</th><th>State</th><th>Addresses</th><th>Network</th></tr>
     {{range .Interfaces}}
     <tr>
       <td>{{.Name}}</td>
       <td>{{.Kind}}</td>
       <td>{{.State}}</td>
       <td>{{if .IPs}}<code>{{join .IPs ", "}}</code>{{else}}—{{end}}</td>
+      <td>{{if .SSID}}{{.SSID}}{{if .APClients}} ({{.APClients}} client){{end}}{{else}}—{{end}}</td>
     </tr>
     {{end}}
   </table>
   {{else}}<p>No network interface.</p>{{end}}
+  {{if .InAPMode}}<p>Setup access point running. Open <code>http://192.168.4.1/</code> or <code>http://wa.local/</code>.</p>{{end}}
 </section>
+
+{{if .Managed}}
 <section class="card">
   <h2>WiFi</h2>
-  {{if .Managed}}
-  <p>WiFi settings arrive with the network manager.</p>
-  {{else}}
-  <p>The network is managed by the host (Docker or a regular computer), so there is nothing to set here.</p>
+  <form method="post" action="/network/scan"><button>Scan for networks</button></form>
+  {{if .Scan}}
+  <p>Networks found {{.ScanAge}}.</p>
+  <table>
+    <tr><th>Network</th><th>Signal</th><th>Security</th><th></th></tr>
+    {{range .Scan}}
+    <tr>
+      <td>{{.SSID}}</td>
+      <td>{{.Signal}} dBm</td>
+      <td>{{if .Secured}}WPA{{else}}open{{end}}</td>
+      <td>
+        <form method="post" action="/network/connect" class="inline">
+          <input type="hidden" name="ssid" value="{{.SSID}}">
+          <input type="hidden" name="secured" value="{{if .Secured}}1{{else}}0{{end}}">
+          {{if .Secured}}<input type="password" name="passphrase" placeholder="Passphrase" autocomplete="off">{{end}}
+          <button>Connect</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </table>
   {{end}}
 </section>
+
+{{if .Saved}}
+<section class="card">
+  <h2>Saved networks</h2>
+  <table>
+    <tr><th>Network</th><th>Last connected</th><th></th></tr>
+    {{range .Saved}}
+    <tr>
+      <td>{{.SSID}}</td>
+      <td>{{if .LastOK}}{{.LastOK.Format "2006-01-02 15:04"}}{{else}}never{{end}}</td>
+      <td><form method="post" action="/network/forget" class="inline">
+        <input type="hidden" name="ssid" value="{{.SSID}}">
+        <button>Forget</button>
+      </form></td>
+    </tr>
+    {{end}}
+  </table>
+</section>
+{{end}}
+
+<section class="card">
+  <h2>Setup access point</h2>
+  <form method="post" action="/network/policy">
+    <label>When to use it
+      <select name="policy">
+        <option value="auto" {{if eq .Policy "auto"}}selected{{end}}>auto (while not linked or nothing else works)</option>
+        <option value="always" {{if eq .Policy "always"}}selected{{end}}>always</option>
+        <option value="never" {{if eq .Policy "never"}}selected{{end}}>never</option>
+      </select>
+    </label>
+    <button>Save</button>
+  </form>
+</section>
+{{else}}
+<section class="card">
+  <p>The network is managed by the host (Docker or a regular computer), so there is nothing to set here.</p>
+</section>
+{{end}}
 {{end}}

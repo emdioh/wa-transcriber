@@ -356,6 +356,18 @@ func (m *managed) Status() Status {
 	return out
 }
 
+// InAPMode reports whether any WiFi interface is running the setup AP.
+func (m *managed) InAPMode() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.wifis {
+		if u.state == stateAP {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *managed) Scan(ctx context.Context) ([]Network, error) {
 	m.mu.Lock()
 	var u *wifiUnit
@@ -417,6 +429,21 @@ func (m *managed) SetAPPolicy(p APPolicy) error {
 	m.policy = p
 	m.mu.Unlock()
 	return nil
+}
+
+// APPolicy returns the current setup-AP policy.
+func (m *managed) APPolicy() APPolicy {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.policy
+}
+
+// SavedNetworks lists the saved WiFi networks.
+func (m *managed) SavedNetworks() []SavedNetwork {
+	if m.store == nil {
+		return nil
+	}
+	return m.store.List()
 }
 
 func (m *managed) Erase() error {

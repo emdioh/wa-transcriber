@@ -157,6 +157,7 @@ func run() error {
 			Log:            log,
 			Network:        nm,
 			NetworkManaged: *networkMode == "managed",
+			InAPMode:       nm.InAPMode,
 		})
 		go func() {
 			log.Info("web UI listening", "addr", *listen)
