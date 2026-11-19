@@ -16,15 +16,19 @@ Each milestone has:
 
 ```
 M7 CI/Docker ──► M8 small items
-     │
-     ├──► M2 experiment ──► M3b coordination
-     │
-     └──► M5 network manager ──► M6 Buildroot images ──► v1.0
+
+M2 experiment ──► M3b coordination (observe-only until M2 decides)
+
+M5 network manager (code, done) ──► M6 Buildroot images
+                                          │
+M5b network validation (needs hardware) ──┴──► v1.0
 ```
 
-M7 first: it needs no hardware and protects every later change. M2/M3b and
-M5/M6 are independent tracks; do them in whatever order the hardware and the
-test phones become available.
+M7 first: it needs no hardware and protects every later change. M2/M3b,
+M5/M6 and M5b are independent tracks: M6 only needs the network-manager
+*code*, not its hardware validation, so images are developed and built first
+and validated on the boards in M5b. Do the tracks in whatever order the
+hardware and the test phones become available.
 
 ---
 
@@ -231,7 +235,11 @@ transcribed exactly once, without visible chatter, and never left
 untranscribed because a peer disappeared.
 
 **Gate in**: M2 decision recorded (claim variant or observe-only; tag
-variant or prefix).
+variant or prefix). **Without an M2 result the milestone can still start:**
+implement the full coordinator but run it in **observe-only** mode (claims
+disabled, deterministic delay, skip when a tagged transcription already
+exists; rare duplicates accepted). The claim mode stays behind a switch until
+M2 produces a usable variant, then it is turned on by default.
 
 ### Design to implement
 
@@ -334,33 +342,21 @@ default (no setting).
 
 ---
 
-## M5 — Network manager
+## M5 — Network manager (code)
 
 Goal: the device is always reachable: ethernet with DHCP or link-local,
 saved WiFi networks, or its own setup access point; `wa.local` resolves on
 every network; WiFi is configured from the web UI.
 
-**Status (2026-11-19): steps 1–12 are implemented and unit-tested with
-scripted fakes (`internal/netmgr`, `internal/netmgr/mdns`). The gate in and
-the exit criteria below still need the hardware: use
-[hardware.md](hardware.md) as the checklist.**
+**Status (2026-11-19): done.** Steps 1–12 are implemented and unit-tested
+with scripted fakes (`internal/netmgr`, `internal/netmgr/mdns`). The dongle
+gate and the on-device scenarios moved to **M5b**.
 
-**Gate in** (hardware gate — do this first, it decides whether to buy a
-dongle):
+**Gate in**: none (M4 done).
 
-1. On the Raspberry Pi 2 with **Raspberry Pi OS Lite** (fine for M5
-   development; M6 replaces it) and on the **Cubieboard** (Allwinner A10,
-   ARMv7, 1 GB; Debian/Armbian image), plug the WiFi dongle and record:
-   `lsusb`, `iw list | grep -A 10 "Supported interface modes"`, the kernel
-   driver (`readlink /sys/class/net/wlan0/device/driver`).
-2. **Pass** if `AP` is listed and a 10-minute manual hostapd test (step 5's
-   config by hand) lets a phone connect. **Fail** → buy an RT5370 or
-   MT7612U dongle and repeat.
-3. Record the result in `docs/hardware.md`.
-
-Development tip: most of M5 can be tested on any Linux laptop with simulated
-WiFi radios: `sudo modprobe mac80211_hwsim radios=2` creates `wlan0` and
-`wlan1` that can talk to each other (one as AP, one as client).
+Development tip: most of this can be exercised on any Linux laptop with
+simulated WiFi radios: `sudo modprobe mac80211_hwsim radios=2` creates
+`wlan0` and `wlan1` that can talk to each other (one as AP, one as client).
 
 ### Package layout
 
@@ -508,6 +504,48 @@ it changes interfaces and binds port 53/67/5353).
 
 ### Exit criteria
 
+1. Unit tests for parsers, golden configs, the state-machine table and mDNS
+   packets pass with `-race`.
+2. `-network none` behaviour unchanged (Docker and dev machines).
+3. `gofmt`, `go vet` clean; `make dist` still produces the three binaries.
+
+### Gate out
+
+M5 code is done → **M6 (Buildroot images) can start**. The on-device
+validation is **M5b** and gates v1.0, not M6.
+
+---
+
+## M5b — Network validation on real hardware
+
+Goal: prove that the network manager actually works on the boards, and pick
+the WiFi dongle.
+
+**Gate in**: M5 code done; a Raspberry Pi 2, a Cubieboard (Allwinner A10,
+ARMv7, 1 GB) and a WiFi dongle. This milestone needs hardware and blocks
+**v1.0** only.
+
+**Why separate**: everything in M5 is verifiable only on a real network
+stack. Keeping it apart lets M6 be developed and built without waiting for
+the boards, and lets a failed dongle (no AP mode) be replaced without
+blocking anything else.
+
+### Steps
+
+1. **Dongle gate** on both boards with **Raspberry Pi OS Lite** (Pi 2) and
+   **Debian/Armbian** (Cubieboard): record `lsusb`,
+   `iw list | grep -A 10 "Supported interface modes"` and the driver
+   (`readlink /sys/class/net/wlan0/device/driver`). **Pass** if `AP` is
+   listed and a 10-minute manual hostapd test lets a phone connect.
+   **Fail** → buy an RT5370 or MT7612U dongle and repeat.
+2. Run the binary in managed mode as a systemd service and execute the eight
+   scenarios, three times each, on the Pi 2 and on the Cubieboard.
+3. Record everything in [hardware.md](hardware.md). After M6 the same
+   scenarios are repeated on the images (M6 exit criteria), so this milestone
+   is "the code works on a normal distro".
+
+### Exit criteria
+
 All with the binary in managed mode as a systemd service; each scenario
 repeated 3 times on the Raspberry Pi 2 + dongle (Raspberry Pi OS Lite) and
 on the Cubieboard (Debian/Armbian, onboard ethernet + the same or a second
@@ -529,14 +567,12 @@ dongle):
 6. `!reset` → reboots into AP mode with no saved networks.
 7. 24-hour soak with WiFi client mode: RSS growth < 10%, goroutine count
    stable (Status page), no reconnect loops in the logs.
-8. Unit tests for parsers, golden configs, state machine table, mDNS
-   packets all pass; `-network none` behaviour unchanged (Docker).
 
 ### Gate out
 
-M5 done on the Pi 2 (Raspberry Pi OS) and the Cubieboard (Debian/Armbian).
-The BeagleBone Black is validated in M6. Record the dongles and the results
-in `docs/hardware.md`.
+M5b done on both boards → the network manager is trustworthy. Record the
+dongles and the results in `docs/hardware.md`. This unlocks the runtime part
+of M6's exit criteria and, together with M6, **v1.0**.
 
 ---
 
@@ -546,8 +582,9 @@ Goal: flashable SD-card images for the Raspberry Pi 2 and the BeagleBone
 Black: boot in < 30 s to a working device, read-only root, data on its own
 partition, survives power cuts.
 
-**Gate in**: M5 exit criteria met. The second board is a **BeagleBone
-Black** (AM3358, ARMv7, 512 MB RAM, microSD boot).
+**Gate in**: M5 steps done (the code is complete and unit-tested; its
+hardware validation is M5b and does *not* block building images). The second
+board is a **BeagleBone Black** (AM3358, ARMv7, 512 MB RAM, microSD boot).
 
 ### Steps
 
@@ -605,12 +642,23 @@ Black** (AM3358, ARMv7, 512 MB RAM, microSD boot).
 
 ### Exit criteria
 
-- Both images build from a clean checkout with one command each.
-- Compressed image < 64 MB; boot to web UI reachable < 30 s on the Pi 2
-  (< 45 s on the BeagleBone Black).
+Build side (no hardware needed, so these are checked first):
+
+- `make -C os check` passes: the BR2_EXTERNAL tree is well formed
+  (external.desc, Config.in, package metadata, genimage configs, init
+  scripts, `wat.txt` template).
+- Both images build from a clean checkout with one command each
+  (`make -C os rpi2`, `make -C os bbb`).
+- Compressed image < 64 MB; read-only root, `DATA` partition created at
+  first boot.
+
+Runtime side (needs the boards; may be done together with M5b):
+
+- Boot to web UI reachable < 30 s on the Pi 2 (< 45 s on the BeagleBone
+  Black).
 - Idle RAM: wa-transcriber RSS < 60 MB; whole system < 100 MB used on the
   Pi 2 and the 512 MB BeagleBone Black with ≥ 30 MB free.
-- All M5 scenarios pass on **both** boards running the images.
+- All M5b scenarios pass on **both** boards running the images.
 - Power-cut test: 50 random power cuts (including during pairing and while
   saving settings) → the device always boots, `config.json` and
   `session.db` stay valid (no re-pairing needed).

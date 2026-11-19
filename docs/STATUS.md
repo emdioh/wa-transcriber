@@ -9,10 +9,11 @@ Last update: 2026-11-19.
 | M1 | WhatsApp skeleton: pairing, message filter, commands, config, RAM logs, Dockerfile | ✅ done |
 | M2 | Experiment: invisible coordination signals on real phones | ⏳ not started (needs two accounts) |
 | M3 | Transcription + translation (OpenAI, OpenRouter, Gemini) | ✅ done |
-| M3b | Multi-transcriber coordination protocol | ⏳ blocked by M2 |
+| M3b | Multi-transcriber coordination protocol | 🔄 in progress (observe-only until M2 decides) |
 | M4 | Web UI | ✅ done |
-| M5 | Network manager (ethernet, WiFi, setup AP, mDNS, clock) | 🔄 all 12 steps implemented; exit criteria need the Pi / Cubieboard + WiFi dongle |
-| M6 | Buildroot images (Pi 2, BeagleBone Black) | ⏳ blocked by M5 |
+| M5 | Network manager, code (ethernet, WiFi, setup AP, mDNS, clock) | ✅ done (unit tests with scripted fakes) |
+| M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
+| M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 in progress (code); runtime criteria need M5b |
 | M7 | CI, Docker image, releases | ⏳ not started (no hardware needed) |
 | M8 | Small items (reply language, public URL in UI, health check) | ⏳ not started |
 
@@ -33,8 +34,8 @@ Last update: 2026-11-19.
 - The Docker image (never built: no Docker in the development sandbox).
 - Everything in `internal/netmgr` beyond unit tests: the managed mode has never
   run on real hardware (no accessible network stack in the sandbox). The
-  commands it issues are tested with scripted fakes only. See
-  [hardware.md](hardware.md) for the checklist to run first.
+  commands it issues are tested with scripted fakes only. Milestone **M5b**
+  runs the on-device scenarios; see [hardware.md](hardware.md).
 
 ## Known limitations and accepted issues
 
