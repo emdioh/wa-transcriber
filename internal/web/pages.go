@@ -19,6 +19,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/emdioh/wa-transcriber/internal/config"
+	"github.com/emdioh/wa-transcriber/internal/netmgr"
 	"github.com/emdioh/wa-transcriber/internal/status"
 	"github.com/emdioh/wa-transcriber/internal/transcribe"
 )
@@ -504,14 +505,17 @@ func describeJID(s string) string {
 // -- network ----------------------------------------------------------------
 
 type networkView struct {
-	Managed bool
-	Addrs   []status.Addr
+	Managed    bool
+	Interfaces []netmgr.Interface
 }
 
 func (s *Server) networkPage(w http.ResponseWriter, r *http.Request) {
 	v := networkView{Managed: s.opts.NetworkManaged}
-	if s.opts.Addrs != nil {
-		v.Addrs = s.opts.Addrs()
+	switch {
+	case s.opts.Network != nil:
+		v.Interfaces = s.opts.Network.Status().Interfaces
+	case s.opts.Addrs != nil:
+		v.Interfaces = netmgr.StatusFromAddrs(s.opts.Addrs()).Interfaces
 	}
 	s.render(w, r, "network", "Network", v)
 }

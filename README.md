@@ -48,6 +48,7 @@ docker run -it -p 8080:80 -v wa-data:/data wa-transcriber
 | `-pair-phone` | `WAT_PAIR_PHONE` | (QR) |
 | `-log-level` | `WAT_LOG_LEVEL` | `info` |
 | `-listen` | `WAT_LISTEN` | `:80` (empty: no web UI) |
+| `-network` | `WAT_NETWORK` | `none` (`managed` is not implemented yet) |
 
 ## Transcription settings
 

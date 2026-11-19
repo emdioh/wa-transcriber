@@ -19,6 +19,7 @@ import (
 	"github.com/emdioh/wa-transcriber/internal/bot"
 	"github.com/emdioh/wa-transcriber/internal/config"
 	"github.com/emdioh/wa-transcriber/internal/logbuf"
+	"github.com/emdioh/wa-transcriber/internal/netmgr"
 	"github.com/emdioh/wa-transcriber/internal/status"
 	"github.com/emdioh/wa-transcriber/internal/transcribe"
 	"github.com/emdioh/wa-transcriber/internal/wa"
@@ -41,6 +42,7 @@ func run() error {
 		"pair with a code instead of a QR: phone number with country code (env WAT_PAIR_PHONE)")
 	logLevel := flag.String("log-level", envOr("WAT_LOG_LEVEL", "info"), "debug, info, warn or error (env WAT_LOG_LEVEL)")
 	listen := flag.String("listen", envOr("WAT_LISTEN", ":80"), "web UI address, empty to disable (env WAT_LISTEN)")
+	networkMode := flag.String("network", envOr("WAT_NETWORK", "none"), "network management: none or managed (env WAT_NETWORK)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -69,6 +71,15 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	nm, err := netmgr.New(*networkMode)
+	if err != nil {
+		return err
+	}
+	if err := nm.Start(ctx); err != nil {
+		return err
+	}
+	log.Info("network manager started", "mode", *networkMode)
 
 	started := time.Now()
 	st := status.New(started)
@@ -107,7 +118,9 @@ func run() error {
 		if err := cfg.Reset(); err != nil {
 			log.Error("erasing config", "err", err)
 		}
-		// TODO(netmgr): erase saved WiFi networks.
+		if err := nm.Erase(); err != nil {
+			log.Error("erasing network settings", "err", err)
+		}
 		return restart(log)
 	}
 	unlink := func(ctx context.Context) error {
@@ -126,16 +139,18 @@ func run() error {
 
 	if *listen != "" {
 		ui := web.New(web.Options{
-			Config:   cfg,
-			Status:   st,
-			Logs:     logs,
-			LogLevel: level,
-			WA:       client,
-			Unlink:   unlink,
-			Reset:    b.Reset,
-			Addrs:    status.Addresses,
-			Version:  version,
-			Log:      log,
+			Config:         cfg,
+			Status:         st,
+			Logs:           logs,
+			LogLevel:       level,
+			WA:             client,
+			Unlink:         unlink,
+			Reset:          b.Reset,
+			Addrs:          status.Addresses,
+			Version:        version,
+			Log:            log,
+			Network:        nm,
+			NetworkManaged: *networkMode == "managed",
 		})
 		go func() {
 			log.Info("web UI listening", "addr", *listen)

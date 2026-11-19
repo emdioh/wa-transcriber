@@ -1,12 +1,19 @@
 {{define "content"}}
 <section class="card">
-  <h2>Addresses</h2>
-  {{if .Addrs}}
+  <h2>Interfaces</h2>
+  {{if .Interfaces}}
   <table>
-    <tr><th>Interface</th><th>Address</th></tr>
-    {{range .Addrs}}<tr><td>{{.Interface}}</td><td><code>{{.IP}}</code></td></tr>{{end}}
+    <tr><th>Interface</th><th>Kind</th><th>State</th><th>Addresses</th></tr>
+    {{range .Interfaces}}
+    <tr>
+      <td>{{.Name}}</td>
+      <td>{{.Kind}}</td>
+      <td>{{.State}}</td>
+      <td>{{if .IPs}}<code>{{join .IPs ", "}}</code>{{else}}—{{end}}</td>
+    </tr>
+    {{end}}
   </table>
-  {{else}}<p>No network address.</p>{{end}}
+  {{else}}<p>No network interface.</p>{{end}}
 </section>
 <section class="card">
   <h2>WiFi</h2>

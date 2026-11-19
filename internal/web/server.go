@@ -30,6 +30,7 @@ import (
 
 	"github.com/emdioh/wa-transcriber/internal/config"
 	"github.com/emdioh/wa-transcriber/internal/logbuf"
+	"github.com/emdioh/wa-transcriber/internal/netmgr"
 	"github.com/emdioh/wa-transcriber/internal/status"
 )
 
@@ -74,6 +75,9 @@ type Options struct {
 	Addrs   func() []status.Addr
 	Version string
 	Log     *slog.Logger
+	// Network is the network manager; when nil the Network page falls back
+	// to listing the addresses reported by Addrs.
+	Network netmgr.Manager
 	// NetworkManaged is false in Docker / on dev machines.
 	NetworkManaged bool
 }
