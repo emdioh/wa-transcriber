@@ -37,13 +37,13 @@ the Buildroot source cache, and the usual host tools (`make`, `gcc`, `bison`,
 
 ```bash
 make -C os check     # structural checks, no network, seconds
-make -C os rpi2      # -> os/output/rpi2/images/sdcard.img
-make -C os bbb       # -> os/output/bbb/images/sdcard.img
+make -C os rpi2      # -> os/_output/rpi2/images/sdcard.img
+make -C os bbb       # -> os/_output/bbb/images/sdcard.img
 ```
 
 The first build compiles a toolchain, the kernel and U-Boot and takes about
-an hour on 12 cores; later builds reuse `os/buildroot-<version>/` and the
-per-board `os/output/<board>/` trees.
+an hour on 12 cores; later builds reuse the download cache in `os/_buildroot/` and the per-board
+`os/_output/<board>/` trees.
 
 What the Makefile does, in order:
 
@@ -61,7 +61,7 @@ What the Makefile does, in order:
 
 ```bash
 # Linux/macOS (find the card first: lsblk / diskutil list)
-sudo dd if=os/output/rpi2/images/sdcard.img of=/dev/sdX bs=4M conv=fsync status=progress
+sudo dd if=os/_output/rpi2/images/sdcard.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 On Windows use Raspberry Pi Imager ("Use custom image") or balenaEtcher.

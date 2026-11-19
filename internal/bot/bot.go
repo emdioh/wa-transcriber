@@ -57,9 +57,21 @@ type Message struct {
 	Text    string
 	// Voice is set for voice notes.
 	Voice *waE2E.AudioMessage
+	// Claim is set when this message is a coordination claim (an empty
+	// reaction carrying ClaimGroupingKey).
+	Claim *ClaimInfo
+	// TranscriptionOf is the voice-note ID when this message is a tagged
+	// transcription reply from another instance.
+	TranscriptionOf string
 	// Quoted is the message this one replies to, if any.
 	Quoted *QuotedMessage
 	Raw    *waE2E.Message
+}
+
+// ClaimInfo describes a coordination claim seen in a chat.
+type ClaimInfo struct {
+	VoiceID string
+	Chat    types.JID
 }
 
 // QuotedMessage is the replied-to message as embedded in the reply.
@@ -83,6 +95,10 @@ func (m *Message) chatKeys() []string {
 type Messenger interface {
 	// Reply posts text in chat, quoting q.
 	Reply(ctx context.Context, chat types.JID, q Quote, text string) error
+	// ReplyTagged posts the same reply carrying the coordination tag, so peer
+	// instances know this voice note is already transcribed. Transcriptions
+	// are always posted with it.
+	ReplyTagged(ctx context.Context, chat types.JID, q Quote, text string) error
 	// Delete revokes one of the owner's messages for everyone.
 	Delete(ctx context.Context, chat types.JID, id string) error
 	// IsSelfChat tells whether the owner is the only member of chat.
@@ -104,11 +120,34 @@ type Network interface {
 	Interfaces() []NetIface
 }
 
+// Lease is the coordinator's permission to post a transcription.
+type Lease interface {
+	// StillMine is checked right before posting: false when a peer won.
+	StillMine() bool
+}
+
+// Coord decides which instance transcribes a voice note when several people
+// run the transcriber in one chat. Nil disables coordination (single owner).
+type Coord interface {
+	// Acquire blocks until this instance should transcribe v (Lease) or
+	// another instance is taking care of it (nil).
+	Acquire(ctx context.Context, v Voice) Lease
+	// ObserveClaim and ObserveTranscription feed peer signals in.
+	ObserveClaim(chat types.JID, voiceID string, from types.JID, at time.Time)
+	ObserveTranscription(chat types.JID, voiceID string, from types.JID)
+	// Counters is a one-line summary for !status.
+	Counters() (claims, stoodDown, tookOver uint64, mode string)
+}
+
 // Voice is a voice note to transcribe.
 type Voice struct {
 	Chat  types.JID
 	Quote Quote
 	Audio *waE2E.AudioMessage
+	// FromMe: the owner sent the note (coordination skips the delay).
+	FromMe bool
+	// Seconds is the note length, used by the coordination watchdog.
+	Seconds int
 }
 
 // ErrNotConfigured is returned by a Transcriber without provider/API key.
@@ -134,6 +173,8 @@ type Bot struct {
 	Addrs func() []status.Addr
 	// Network is optional: without it !status lists addresses only.
 	Network Network
+	// Coord is optional: without it every voice note is transcribed here.
+	Coord Coord
 	// WebPort is the web UI port ("" = web UI disabled).
 	WebPort string
 	Version string
@@ -199,6 +240,26 @@ func (b *Bot) Handle(ctx context.Context, m *Message) {
 	if !b.firstTime(m.Chat.String() + "/" + m.ID) {
 		return
 	}
+	// Coordination signals are not commands and never produce a reply; they
+	// are fed to the coordinator and otherwise ignored.
+	if b.Coord != nil {
+		if m.Claim != nil {
+			if !m.FromMe {
+				chat := m.Claim.Chat
+				if chat.IsEmpty() {
+					chat = m.Chat
+				}
+				b.Coord.ObserveClaim(chat, m.Claim.VoiceID, m.Sender, m.Time)
+			}
+			return
+		}
+		if m.TranscriptionOf != "" {
+			if !m.FromMe {
+				b.Coord.ObserveTranscription(m.Chat, m.TranscriptionOf, m.Sender)
+			}
+			return
+		}
+	}
 	switch {
 	case m.Voice != nil:
 		b.onVoice(ctx, m)
@@ -221,17 +282,70 @@ func (b *Bot) onVoice(ctx context.Context, m *Message) {
 		b.log().Debug("voice note: auto-transcription off", "chat", m.Chat)
 		return
 	}
-	b.transcribe(ctx, m.Chat, Voice{Chat: m.Chat, Quote: m.AsQuote(), Audio: m.Voice}, nil)
+	v := Voice{
+		Chat:    m.Chat,
+		Quote:   m.AsQuote(),
+		Audio:   m.Voice,
+		FromMe:  m.FromMe,
+		Seconds: int(m.Voice.GetSeconds()),
+	}
+	if b.Coord != nil {
+		var lease Lease
+		lease = b.Coord.Acquire(ctx, v)
+		if lease == nil {
+			// Another instance claims this note (or already posted it).
+			return
+		}
+		b.transcribeLeased(ctx, m.Chat, v, lease)
+		return
+	}
+	b.transcribe(ctx, m.Chat, v, nil)
+}
+
+// transcribeLeased transcribes and posts only if the lease survived.
+func (b *Bot) transcribeLeased(ctx context.Context, chat types.JID, v Voice, lease Lease) {
+	text, err := b.transcribeText(ctx, v)
+	if err != nil {
+		return
+	}
+	if !lease.StillMine() {
+		b.log().Info("coord: result dropped, a peer won", "chat", chat, "msg", v.Quote.ID)
+		return
+	}
+	b.postTranscription(ctx, chat, v, text)
 }
 
 // transcribe runs the transcriber and posts the result quoting the voice
 // note. When cmd is not nil (the !t command), problems are reported to it.
 func (b *Bot) transcribe(ctx context.Context, chat types.JID, v Voice, cmd *Message) {
+	text, err := b.transcribeText(ctx, v)
+	if err == nil {
+		b.postTranscription(ctx, chat, v, text)
+		return
+	}
+	if cmd != nil {
+		b.reportTranscribeError(ctx, cmd, err)
+	}
+}
+
+// transcribeText runs the provider call plus the "no speech" normalisation.
+func (b *Bot) transcribeText(ctx context.Context, v Voice) (string, error) {
 	var text string
 	err := ErrNotConfigured
 	if b.Transcriber != nil && b.Transcriber.Configured() {
 		text, err = b.Transcriber.Transcribe(ctx, v)
 	}
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(text) == "" {
+		text = "(no speech recognised)"
+	}
+	return text, nil
+}
+
+// reportTranscribeError tells the user (only for !t) why nothing was posted.
+func (b *Bot) reportTranscribeError(ctx context.Context, cmd *Message, err error) {
 	if errors.Is(err, ErrNotConfigured) {
 		b.mu.Lock()
 		warn := !b.warnedNoTr
@@ -240,22 +354,16 @@ func (b *Bot) transcribe(ctx context.Context, chat types.JID, v Voice, cmd *Mess
 		if warn {
 			b.log().Warn("transcription not configured: voice notes are ignored")
 		}
-		if cmd != nil {
-			b.reply(ctx, cmd, "⚠️ Transcription is not configured yet (open the web UI).")
-		}
+		b.reply(ctx, cmd, "⚠️ Transcription is not configured yet (open the web UI).")
 		return
 	}
-	if err != nil {
-		b.log().Error("transcription failed", "chat", chat, "msg", v.Quote.ID, "err", err)
-		if cmd != nil {
-			b.reply(ctx, cmd, "⚠️ Transcription failed, try again later with !t.")
-		}
-		return
-	}
-	if strings.TrimSpace(text) == "" {
-		text = "(no speech recognised)"
-	}
-	if err := b.WA.Reply(ctx, chat, v.Quote, TranscriptionPrefix+text); err != nil {
+	b.log().Error("transcription failed", "chat", cmd.Chat, "msg", cmd.Quoted.ID, "err", err)
+	b.reply(ctx, cmd, "⚠️ Transcription failed, try again later with !t.")
+}
+
+// postTranscription posts the text quoting the voice note.
+func (b *Bot) postTranscription(ctx context.Context, chat types.JID, v Voice, text string) {
+	if err := b.WA.ReplyTagged(ctx, chat, v.Quote, TranscriptionPrefix+text); err != nil {
 		b.log().Error("posting transcription failed", "chat", chat, "err", err)
 		return
 	}

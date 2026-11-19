@@ -9,7 +9,7 @@ Last update: 2026-11-19.
 | M1 | WhatsApp skeleton: pairing, message filter, commands, config, RAM logs, Dockerfile | ✅ done |
 | M2 | Experiment: invisible coordination signals on real phones | ⏳ not started (needs two accounts) |
 | M3 | Transcription + translation (OpenAI, OpenRouter, Gemini) | ✅ done |
-| M3b | Multi-transcriber coordination protocol | 🔄 in progress (observe-only until M2 decides) |
+| M3b | Multi-transcriber coordination protocol | ✅ done (code; claims off until M2 decides) |
 | M4 | Web UI | ✅ done |
 | M5 | Network manager, code (ethernet, WiFi, setup AP, mDNS, clock) | ✅ done (unit tests with scripted fakes) |
 | M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
@@ -50,7 +50,9 @@ Last update: 2026-11-19.
   away (or with `!password` from WhatsApp).
 - Logs are lost on restart (RAM only, by design).
 - Bot replies are English only (M8 adds a setting).
-- Two transcribers in one chat both answer (M3b fixes it).
+- With two transcribers in one chat, both answer only until the M2 result
+  allows claims to be turned on (`-coord-claims`). In observe-only mode the
+  duplicate is accepted by design.
 - One WhatsApp account per device.
 
 ## Code map
@@ -62,13 +64,16 @@ internal/bot/                commands, voice dispatch, !status text
 internal/transcribe/         settings resolution, providers, translation, queue
 internal/web/                server, sessions, pages, templates/, static/
 internal/config/             config.json store
+internal/coord/              multi-transcriber coordination (claims, watchdog)
 internal/netmgr/             network manager: none + managed (ethernet, WiFi, AP, policy)
+internal/watchdog/           hardware watchdog keeper (images only)
 internal/netmgr/mdns/        in-binary mDNS responder for wa.local
 internal/status/             runtime state, interface addresses
 internal/logbuf/             RAM log buffer
-docs/                        ARCHITECTURE.md, STATUS.md, PLAN.md
+os/                          Buildroot BR2_EXTERNAL tree (Pi 2, BeagleBone Black)
+docs/                        ARCHITECTURE.md, STATUS.md, PLAN.md, hardware.md
 ```
 
-Build and test: `make test`, `make build`, `make dist`. Run locally:
+Build and test: `make test`, `make build`, `make dist`, `make -C os check`. Run locally:
 `./wa-transcriber -data ./data -listen :8080`. Network management is off
 unless `-network managed` (needs root).

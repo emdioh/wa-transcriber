@@ -156,7 +156,7 @@ groups keys of the same chat into one row (`wa.CanonicalChat`).
   - CSP `default-src 'self'`, no inline scripts, no framing;
   - the API key is write-only (never rendered back).
 
-## 6. Multi-transcriber coordination (planned — milestones 2 and 3b)
+## 6. Multi-transcriber coordination
 
 Problem: two people in the same chat both run a transcriber → every voice
 note is transcribed twice. Constraint: no visible "bot chatter".
@@ -164,19 +164,37 @@ note is transcribed twice. Constraint: no visible "bot chatter".
 Idea: messages are end-to-end encrypted, so extra protobuf fields reach the
 other side untouched, and official clients ignore what they do not render.
 
-- **Tag**: every transcription reply carries a marker (candidate:
-  `ContextInfo.conversionSource = "wat/1"`; final field chosen by the
-  milestone 2 experiment).
-- **Claim**: an *empty reaction* (= "remove my reaction", invisible when
-  there was none) on the voice note, with `groupingKey = "wat/claim/1"`.
+- **Tag**: every transcription reply carries
+  `ContextInfo.conversionSource = "wat/1"`. Peers recognise it and skip that
+  voice note. Legacy Megachat replies (`🎤 Trascrizione:` prefix quoting a
+  voice note) are recognised too, so a mixed deployment does not duplicate.
+- **Claim**: an *empty reaction* on the voice note with
+  `groupingKey = "wat/claim/1"` — "remove my reaction" when there is none,
+  so nothing is rendered.
 
-Per voice note: the sender's own transcriber claims at once; everybody else
-waits a deterministic 1–4 s derived from `sha256(voiceID|ownNumber)`; a claim
-seen while waiting → stand down and arm a watchdog (45 s + note length) that
-takes over if no tagged transcription appears; crossing claims → lowest hash
-wins. `!t` bypasses coordination. Details and fallbacks: PLAN.md, M2/M3b.
+Algorithm (`internal/coord`), per voice note, state keyed by `chat|voiceID`
+and kept 10 minutes:
 
-## 7. Networking (milestone 5)
+1. `rank(jid) = first 8 bytes of sha256(voiceID + "|" + jid.User)` as uint64;
+   lower wins. The phone-number JID is used when known (LIDs differ per
+   account).
+2. Delay: 0 if the owner sent the note, otherwise `1 s + rank(self) % 3 s`.
+3. While waiting, a claim or a tagged transcription for the note → stand
+   down.
+4. Then claim (claim mode), wait a 1.5 s settle window; a claim from a peer
+   with a lower rank in that window → stand down.
+5. Transcribe; `Lease.StillMine()` just before posting drops the result if a
+   lower-rank peer claimed meanwhile (crossing claims).
+6. Standing down arms a watchdog of `45 s + note length`: if no tagged
+   transcription appears, this instance takes over (claim, no delay).
+
+`!t` bypasses the coordinator: the owner asked explicitly.
+
+**Modes**: observe-only is the default until the M2 experiment proves claims
+invisible on real phones (`-coord-claims` / `WAT_COORD_CLAIMS=1` turns claims
+on). Observe-only still skips notes that already carry a tagged
+transcription, and accepts a rare duplicate. `!status` shows
+`coordination: claim|observe-only, claims N, stood down N, took over N`.## 7. Networking (milestone 5)
 
 `-network none|managed` (env `WAT_NETWORK`). Mode `none` is the default and
 reports addresses only (Docker, dev machines). Mode `managed` runs as root and

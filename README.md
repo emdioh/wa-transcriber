@@ -49,6 +49,7 @@ docker run -it -p 8080:80 -v wa-data:/data wa-transcriber
 | `-log-level` | `WAT_LOG_LEVEL` | `info` |
 | `-listen` | `WAT_LISTEN` | `:80` (empty: no web UI) |
 | `-watchdog` | `WAT_WATCHDOG` | empty (disabled); the images pass `/dev/watchdog` |
+| `-coord-claims` | `WAT_COORD_CLAIMS` | off; see [Multi-transcriber](#multi-transcriber) |
 | `-network` | `WAT_NETWORK` | `none` (`managed` on the image) |
 
 ## Flashing an SD card
@@ -58,9 +59,9 @@ Buildroot ([os/README.md](os/README.md)):
 
 ```bash
 make -C os check          # validates the build tree, a few seconds
-make -C os rpi2           # os/output/rpi2/images/sdcard.img
-make -C os bbb            # os/output/bbb/images/sdcard.img
-sudo dd if=os/output/rpi2/images/sdcard.img of=/dev/sdX bs=4M conv=fsync status=progress
+make -C os rpi2           # os/_output/rpi2/images/sdcard.img
+make -C os bbb            # os/_output/bbb/images/sdcard.img
+sudo dd if=os/_output/rpi2/images/sdcard.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Before ejecting, edit `wat.txt` on the small FAT partition (`setup_ap_key`,
@@ -87,6 +88,21 @@ uses this; Docker and dev machines keep `none`):
   logged).
 - **`wa.local`** resolves on the LAN through mDNS.
 - `!reset` also forgets the saved WiFi networks.
+
+## Multi-transcriber
+
+When several people in a chat run wa-transcriber, each instance decides
+whether to transcribe a voice note:
+
+- every transcription reply carries an invisible tag, so the others skip a
+  note that is already done;
+- once the M2 experiment confirms that an empty reaction is invisible on all
+  clients, `-coord-claims` (or `WAT_COORD_CLAIMS=1`) lets instances claim a
+  note before working on it, with a hash-based order and a watchdog that
+  takes over if the claimer disappears.
+
+Until then the default is observe-only: no claims, duplicates possible but
+rare.
 
 ## Transcription settings
 

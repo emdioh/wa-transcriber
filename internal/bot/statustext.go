@@ -33,6 +33,11 @@ func (b *Bot) statusText() string {
 	fmt.Fprintf(&sb, "• Transcription: %s, global %s, %d chat override(s)\n",
 		configured, onoff(tr.Global), len(tr.Chats))
 	fmt.Fprintf(&sb, "• Uptime: %s\n", now.Sub(s.Started).Round(time.Second))
+	if b.Coord != nil {
+		claims, stoodDown, tookOver, mode := b.Coord.Counters()
+		fmt.Fprintf(&sb, "• Coordination: %s, claims %d, stood down %d, took over %d\n",
+			mode, claims, stoodDown, tookOver)
+	}
 	if !s.ClockSynced {
 		sb.WriteString("• Clock: ⚠ not synced when WhatsApp was connected\n")
 	}

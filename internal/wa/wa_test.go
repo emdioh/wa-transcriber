@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -64,5 +65,86 @@ func TestIsVoice(t *testing.T) {
 		if got := isVoice(c.a); got != c.want {
 			t.Errorf("isVoice(%v) = %v", c.a, got)
 		}
+	}
+}
+
+func TestConvertClaim(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: friend, Sender: friend},
+			ID:            "CLAIM", Timestamp: time.Unix(1, 0),
+		},
+		Message: &waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{
+			Key:         &waCommon.MessageKey{RemoteJID: proto.String(friend.String()), ID: proto.String("VOICE1"), FromMe: proto.Bool(false)},
+			Text:        proto.String(""),
+			GroupingKey: proto.String(ClaimGroupingKey),
+		}},
+	}
+	m := convert(evt)
+	if m == nil || m.Claim == nil {
+		t.Fatalf("claim not recognised: %+v", m)
+	}
+	if m.Claim.VoiceID != "VOICE1" || m.Claim.Chat != friend {
+		t.Fatalf("claim = %+v", m.Claim)
+	}
+	if m.Text != "" || m.TranscriptionOf != "" {
+		t.Fatalf("a claim must not look like text: %+v", m)
+	}
+}
+
+func TestConvertIgnoresOrdinaryReactions(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: friend, Sender: friend}},
+		Message: &waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{
+			Key:  &waCommon.MessageKey{RemoteJID: proto.String(friend.String()), ID: proto.String("VOICE1")},
+			Text: proto.String("👍"),
+		}},
+	}
+	if m := convert(evt); m == nil || m.Claim != nil {
+		t.Fatalf("ordinary reaction treated as a claim: %+v", m)
+	}
+}
+
+func TestConvertTaggedTranscription(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: friend, Sender: friend}},
+		Message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String("🎤 hello"),
+			ContextInfo: &waE2E.ContextInfo{
+				StanzaID:         proto.String("VOICE2"),
+				ConversionSource: proto.String(TagSource),
+			},
+		}},
+	}
+	m := convert(evt)
+	if m == nil || m.TranscriptionOf != "VOICE2" {
+		t.Fatalf("tag not recognised: %+v", m)
+	}
+}
+
+func TestConvertLegacyMegachatTranscription(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: friend, Sender: friend}},
+		Message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:        proto.String(LegacyPrefix + " ciao a tutti"),
+			ContextInfo: &waE2E.ContextInfo{StanzaID: proto.String("VOICE3")},
+		}},
+	}
+	m := convert(evt)
+	if m == nil || m.TranscriptionOf != "VOICE3" {
+		t.Fatalf("legacy prefix not recognised: %+v", m)
+	}
+}
+
+func TestConvertPlainReplyIsNotATranscription(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: friend, Sender: friend}},
+		Message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:        proto.String("just a reply"),
+			ContextInfo: &waE2E.ContextInfo{StanzaID: proto.String("VOICE4")},
+		}},
+	}
+	if m := convert(evt); m == nil || m.TranscriptionOf != "" {
+		t.Fatalf("plain reply treated as a transcription: %+v", m)
 	}
 }

@@ -3,8 +3,8 @@
 # Buildroot itself is downloaded and pinned here (not a submodule, not
 # vendored) so a clean checkout needs one command per board:
 #
-#	make -C os rpi2     -> os/output/rpi2/images/sdcard.img
-#	make -C os bbb      -> os/output/bbb/images/sdcard.img
+#	make -C os rpi2     -> os/_output/rpi2/images/sdcard.img
+#	make -C os bbb      -> os/_output/bbb/images/sdcard.img
 #
 # The transcriber binary is cross-compiled by the Go toolchain first (see
 # "prebuilt" below) and then only copied into the target filesystem; Go is
@@ -12,17 +12,21 @@
 # static, cgo-free binary).
 
 BUILDROOT_VERSION ?= 2024.02.9
-BUILDROOT_TARBALL := buildroot-$(BUILDROOT_VERSION).tar.gz
-BUILDROOT_URL     ?= https://buildroot.org/downloads/$(BUILDROOT_TARBALL)
-BUILDROOT_DIR     := buildroot-$(BUILDROOT_VERSION)
+
+# Everything generated lives under _-prefixed directories: the Go toolchain
+# ignores those, so "go build ./..." never walks into a Buildroot tree.
+BUILDROOT_ROOT    := $(CURDIR)/_buildroot
+BUILDROOT_DIR     := $(BUILDROOT_ROOT)/buildroot-$(BUILDROOT_VERSION)
+BUILDROOT_TARBALL := $(BUILDROOT_ROOT)/buildroot-$(BUILDROOT_VERSION).tar.gz
+BUILDROOT_URL     ?= https://buildroot.org/downloads/buildroot-$(BUILDROOT_VERSION).tar.gz
 BR2_EXTERNAL      := $(CURDIR)
 GO_DIST           := $(CURDIR)/../dist/wa-transcriber-linux-armv7
 
 JOBS ?= $(shell nproc 2>/dev/null || echo 2)
 
 # One output directory per board, so both can be built from the same tree.
-OUT_rpi2 := $(CURDIR)/output/rpi2
-OUT_bbb  := $(CURDIR)/output/bbb
+OUT_rpi2 := $(CURDIR)/_output/rpi2
+OUT_bbb  := $(CURDIR)/_output/bbb
 
 .PHONY: all rpi2 bbb prebuilt buildroot check clean distclean download menuconfig-rpi2 menuconfig-bbb
 
@@ -48,7 +52,8 @@ $(BUILDROOT_TARBALL):
 	curl -fL -o $@ $(BUILDROOT_URL)
 
 $(BUILDROOT_DIR)/.stamp-extracted: $(BUILDROOT_TARBALL)
-	tar xzf $(BUILDROOT_TARBALL)
+	@mkdir -p $(BUILDROOT_ROOT)
+	tar xzf $(BUILDROOT_TARBALL) -C $(BUILDROOT_ROOT)
 	touch $@
 
 # --- board images ----------------------------------------------------------
@@ -82,4 +87,4 @@ clean:
 	rm -rf $(OUT_rpi2) $(OUT_bbb)
 
 distclean: clean
-	rm -rf $(BUILDROOT_DIR) $(BUILDROOT_TARBALL) prebuilt
+	rm -rf $(BUILDROOT_ROOT) $(OUT_rpi2) $(OUT_bbb) prebuilt

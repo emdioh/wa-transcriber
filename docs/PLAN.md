@@ -241,6 +241,13 @@ disabled, deterministic delay, skip when a tagged transcription already
 exists; rare duplicates accepted). The claim mode stays behind a switch until
 M2 produces a usable variant, then it is turned on by default.
 
+**Status (2026-11-19): done in observe-only mode.** `internal/coord` (rank,
+delay, settle window, watchdog takeover), the wire format (`wat/claim/1`
+grouping key, `wat/1` `ConversionSource` tag, legacy prefix), the bot
+integration and the simulation tests are in. `-coord-claims` /
+`WAT_COORD_CLAIMS=1` enables real claims; M2 decides whether it becomes the
+default. The field tests (exit criteria below) still need two accounts.
+
 ### Design to implement
 
 New package `internal/coord`:

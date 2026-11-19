@@ -17,8 +17,11 @@ import (
 	"syscall"
 	"time"
 
+	"go.mau.fi/whatsmeow/types"
+
 	"github.com/emdioh/wa-transcriber/internal/bot"
 	"github.com/emdioh/wa-transcriber/internal/config"
+	"github.com/emdioh/wa-transcriber/internal/coord"
 	"github.com/emdioh/wa-transcriber/internal/logbuf"
 	"github.com/emdioh/wa-transcriber/internal/netmgr"
 	"github.com/emdioh/wa-transcriber/internal/status"
@@ -51,6 +54,8 @@ func run() error {
 	listen := flag.String("listen", envOr("WAT_LISTEN", ":80"), "web UI address, empty to disable (env WAT_LISTEN)")
 	networkMode := flag.String("network", envOr("WAT_NETWORK", "none"), "network management: none or managed (env WAT_NETWORK)")
 	watchdogDev := flag.String("watchdog", os.Getenv("WAT_WATCHDOG"), "hardware watchdog device, empty to disable (env WAT_WATCHDOG)")
+	claimMode := flag.Bool("coord-claims", os.Getenv("WAT_COORD_CLAIMS") == "1",
+		"multi-transcriber claims: on only once the M2 experiment proves them invisible (env WAT_COORD_CLAIMS=1)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -113,6 +118,21 @@ func run() error {
 			"(web UI, config.json or WAT_PROVIDER / WAT_API_KEY)")
 	}
 
+	// Multi-transcriber coordination. Claims stay off until the M2 experiment
+	// on real phones proves they are invisible; observe-only mode (skip when
+	// a peer already posted a tagged transcription) is always on.
+	var signals coord.Signals
+	if *claimMode {
+		signals = client
+	}
+	co := &coord.Coordinator{
+		Self:      client.Self,
+		Signals:   signals,
+		Log:       log,
+		ClaimMode: *claimMode,
+	}
+	log.Info("coordination", "mode", map[bool]string{true: "claim", false: "observe-only"}[*claimMode])
+
 	b := &bot.Bot{
 		WA:          client,
 		Config:      cfg,
@@ -120,6 +140,7 @@ func run() error {
 		Transcriber: tr,
 		Addrs:       status.Addresses,
 		Network:     netAdapter{nm},
+		Coord:       coordAdapter{co},
 		WebPort:     listenPort(*listen),
 		Version:     version,
 		Started:     started,
@@ -237,6 +258,36 @@ func listenPort(addr string) string {
 		return port
 	}
 	return "80"
+}
+
+// coordAdapter exposes the coordinator to the bot without making bot depend
+// on the coord package.
+type coordAdapter struct{ c *coord.Coordinator }
+
+func (a coordAdapter) Acquire(ctx context.Context, v bot.Voice) bot.Lease {
+	lease := a.c.Acquire(ctx, coord.Voice{
+		Chat:    v.Chat,
+		ID:      v.Quote.ID,
+		Sender:  v.Quote.Sender,
+		FromMe:  v.FromMe,
+		Seconds: v.Seconds,
+	})
+	if lease == nil {
+		return nil
+	}
+	return lease
+}
+
+func (a coordAdapter) ObserveClaim(chat types.JID, voiceID string, from types.JID, at time.Time) {
+	a.c.ObserveClaim(chat, voiceID, from, at)
+}
+
+func (a coordAdapter) ObserveTranscription(chat types.JID, voiceID string, from types.JID) {
+	a.c.ObserveTranscription(chat, voiceID, from)
+}
+
+func (a coordAdapter) Counters() (claims, stoodDown, tookOver uint64, mode string) {
+	return a.c.Counters()
 }
 
 // netAdapter exposes the network manager to the bot without making bot depend

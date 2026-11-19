@@ -16,6 +16,7 @@ import (
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
@@ -349,11 +350,56 @@ func convert(v *events.Message) *bot.Message {
 		ext := msg.GetExtendedTextMessage()
 		m.Text = ext.GetText()
 		m.Quoted = quoted(info, ext.GetContextInfo())
+		m.TranscriptionOf = transcriptionOf(ext)
+	}
+	// A claim is an empty reaction carrying our grouping key: invisible in
+	// every official client (no reaction is sent, one is removed).
+	if r := msg.GetReactionMessage(); r != nil && r.GetGroupingKey() == ClaimGroupingKey {
+		m.Claim = &bot.ClaimInfo{
+			VoiceID: r.GetKey().GetID(),
+			Chat:    chatOfKey(r.GetKey()),
+		}
 	}
 	if a := msg.GetAudioMessage(); isVoice(a) {
 		m.Voice = a
 	}
 	return m
+}
+
+// Wire format for multi-transcriber coordination (see docs/ARCHITECTURE.md §6).
+const (
+	// ClaimGroupingKey marks an empty reaction as "I am transcribing this".
+	ClaimGroupingKey = "wat/claim/1"
+	// TagSource is set in ContextInfo.ConversionSource of a transcription
+	// reply, so peers can recognise it without visible markers.
+	TagSource = "wat/1"
+	// LegacyPrefix is how Megachat transcriptions start; recognised so a
+	// second instance does not duplicate them.
+	LegacyPrefix = "🎤 Trascrizione:"
+)
+
+// transcriptionOf reports the voice note a tagged reply belongs to.
+func transcriptionOf(ext *waE2E.ExtendedTextMessage) string {
+	ci := ext.GetContextInfo()
+	if ci.GetStanzaID() == "" {
+		return ""
+	}
+	if ci.GetConversionSource() == TagSource ||
+		strings.HasPrefix(strings.TrimSpace(ext.GetText()), LegacyPrefix) {
+		return ci.GetStanzaID()
+	}
+	return ""
+}
+
+func chatOfKey(k *waCommon.MessageKey) types.JID {
+	if k == nil || k.GetRemoteJID() == "" {
+		return types.EmptyJID
+	}
+	jid, err := types.ParseJID(k.GetRemoteJID())
+	if err != nil {
+		return types.EmptyJID
+	}
+	return jid
 }
 
 func quoted(info types.MessageInfo, ci *waE2E.ContextInfo) *bot.QuotedMessage {
@@ -404,6 +450,46 @@ func (c *Client) Reply(ctx context.Context, chat types.JID, q bot.Quote, text st
 		ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(text), ContextInfo: ci},
 	})
 	return err
+}
+
+// ReplyTagged is Reply with the coordination tag in ContextInfo, so peer
+// instances recognise the transcription as such (invisible in the clients).
+func (c *Client) ReplyTagged(ctx context.Context, chat types.JID, q bot.Quote, text string) error {
+	ci := &waE2E.ContextInfo{
+		StanzaID:         proto.String(q.ID),
+		QuotedMessage:    q.Raw,
+		ConversionSource: proto.String(TagSource),
+	}
+	if !q.Sender.IsEmpty() {
+		ci.Participant = proto.String(q.Sender.ToNonAD().String())
+	}
+	_, err := c.cli.SendMessage(ctx, chat, &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(text), ContextInfo: ci},
+	})
+	return err
+}
+
+// Claim publishes "I am transcribing voiceID" as an empty reaction with a
+// grouping key: no reaction is added, so nothing is visible in the chat.
+func (c *Client) Claim(ctx context.Context, chat, voiceSender types.JID, voiceID string) error {
+	msg := c.cli.BuildReaction(chat, voiceSender, voiceID, "")
+	if r := msg.GetReactionMessage(); r != nil {
+		r.GroupingKey = proto.String(ClaimGroupingKey)
+	}
+	_, err := c.cli.SendMessage(ctx, chat, msg)
+	return err
+}
+
+// Self returns our own JIDs (phone-number and LID form), for coordination.
+func (c *Client) Self() []types.JID {
+	var out []types.JID
+	if id := c.cli.Store.ID; id != nil {
+		out = append(out, id.ToNonAD())
+	}
+	if lid := c.cli.Store.LID; !lid.IsEmpty() {
+		out = append(out, lid.ToNonAD())
+	}
+	return out
 }
 
 // Delete revokes one of the owner's messages for everyone.

@@ -33,6 +33,7 @@ type sent struct {
 type fakeWA struct {
 	mu      sync.Mutex
 	replies []sent
+	tagged  int
 	deleted []string
 	self    map[types.JID]bool
 }
@@ -40,6 +41,15 @@ type fakeWA struct {
 func (f *fakeWA) Reply(_ context.Context, chat types.JID, q Quote, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.replies = append(f.replies, sent{chat, q.ID, text})
+	return nil
+}
+
+// ReplyTagged records the reply and the tag it would carry on the wire.
+func (f *fakeWA) ReplyTagged(_ context.Context, chat types.JID, q Quote, text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tagged++
 	f.replies = append(f.replies, sent{chat, q.ID, text})
 	return nil
 }
