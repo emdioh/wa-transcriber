@@ -1,6 +1,6 @@
 # Status
 
-Last update: 2026-11-16.
+Last update: 2026-11-19.
 
 ## Milestones
 
@@ -11,7 +11,7 @@ Last update: 2026-11-16.
 | M3 | Transcription + translation (OpenAI, OpenRouter, Gemini) | ✅ done |
 | M3b | Multi-transcriber coordination protocol | ⏳ blocked by M2 |
 | M4 | Web UI | ✅ done |
-| M5 | Network manager (ethernet, WiFi, setup AP, mDNS, clock) | 🔄 in progress — step 1 done (skeleton + mode `none`); the rest needs the Pi / Cubieboard + WiFi dongle |
+| M5 | Network manager (ethernet, WiFi, setup AP, mDNS, clock) | 🔄 all 12 steps implemented; exit criteria need the Pi / Cubieboard + WiFi dongle |
 | M6 | Buildroot images (Pi 2, BeagleBone Black) | ⏳ blocked by M5 |
 | M7 | CI, Docker image, releases | ⏳ not started (no hardware needed) |
 | M8 | Small items (reply language, public URL in UI, health check) | ⏳ not started |
@@ -31,6 +31,10 @@ Last update: 2026-11-16.
 - `!reset` end to end (logout + erase + re-exec).
 - Self-chat detection for single-member groups.
 - The Docker image (never built: no Docker in the development sandbox).
+- Everything in `internal/netmgr` beyond unit tests: the managed mode has never
+  run on real hardware (no accessible network stack in the sandbox). The
+  commands it issues are tested with scripted fakes only. See
+  [hardware.md](hardware.md) for the checklist to run first.
 
 ## Known limitations and accepted issues
 
@@ -57,11 +61,13 @@ internal/bot/                commands, voice dispatch, !status text
 internal/transcribe/         settings resolution, providers, translation, queue
 internal/web/                server, sessions, pages, templates/, static/
 internal/config/             config.json store
-internal/netmgr/             network manager (mode none done; managed pending)
+internal/netmgr/             network manager: none + managed (ethernet, WiFi, AP, policy)
+internal/netmgr/mdns/        in-binary mDNS responder for wa.local
 internal/status/             runtime state, interface addresses
 internal/logbuf/             RAM log buffer
 docs/                        ARCHITECTURE.md, STATUS.md, PLAN.md
 ```
 
 Build and test: `make test`, `make build`, `make dist`. Run locally:
-`./wa-transcriber -data ./data -listen :8080`.
+`./wa-transcriber -data ./data -listen :8080`. Network management is off
+unless `-network managed` (needs root).

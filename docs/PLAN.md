@@ -340,6 +340,11 @@ Goal: the device is always reachable: ethernet with DHCP or link-local,
 saved WiFi networks, or its own setup access point; `wa.local` resolves on
 every network; WiFi is configured from the web UI.
 
+**Status (2026-11-19): steps 1–12 are implemented and unit-tested with
+scripted fakes (`internal/netmgr`, `internal/netmgr/mdns`). The gate in and
+the exit criteria below still need the hardware: use
+[hardware.md](hardware.md) as the checklist.**
+
 **Gate in** (hardware gate — do this first, it decides whether to buy a
 dongle):
 

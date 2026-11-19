@@ -6,6 +6,8 @@ require (
 	github.com/mdp/qrterminal/v3 v3.2.1
 	go.mau.fi/whatsmeow v0.0.0-20261116172437-19d61352436f
 	golang.org/x/crypto v0.59.0
+	golang.org/x/net v0.62.0
+	golang.org/x/sys v0.50.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.62.0
 	rsc.io/qr v0.2.0
@@ -28,9 +30,7 @@ require (
 	go.mau.fi/libsignal v0.2.3 // indirect
 	go.mau.fi/util v0.11.1 // indirect
 	golang.org/x/exp v0.0.0-20261113113407-e3970619a1a4 // indirect
-	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
-	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/term v0.48.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
 	modernc.org/libc v1.80.1 // indirect

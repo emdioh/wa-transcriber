@@ -176,22 +176,59 @@ seen while waiting → stand down and arm a watchdog (45 s + note length) that
 takes over if no tagged transcription appears; crossing claims → lowest hash
 wins. `!t` bypasses coordination. Details and fallbacks: PLAN.md, M2/M3b.
 
-## 7. Networking (planned — milestone 5)
+## 7. Networking (milestone 5)
 
-Interfaces are handled independently:
+`-network none|managed` (env `WAT_NETWORK`). Mode `none` is the default and
+reports addresses only (Docker, dev machines). Mode `managed` runs as root and
+drives everything itself.
 
-- **Ethernet**: on carrier → DHCP (`udhcpc`); no lease → IPv4 link-local
-  (169.254/16) so a direct cable to a laptop works. mDNS `wa.local` is
-  announced as soon as an address exists.
-- **WiFi** (when an adapter exists): try saved networks (~45 s); otherwise
-  start the setup AP `WA-Setup-XXXX` (WPA2) with DHCP and a DNS that answers
-  every name with the device address (captive-portal friendly, works without
-  mDNS). With no AP clients, retry saved networks periodically.
-- **AP policy**: `auto` (default: AP while not paired or while nothing else
-  works), `always`, `never`. The AP never routes to the LAN.
-- **Clock**: WhatsApp needs a correct clock; wait for NTP before connecting.
-- **Mode `none`** (Docker, dev machines): no network management; mDNS only
-  with host networking.
+Package layout (`internal/netmgr`):
+
+| File | Role |
+|---|---|
+| `netmgr.go` | `Manager` interface, `Status`, kinds/states, mode selection |
+| `none.go` | mode none: groups `status.Addresses()` by interface |
+| `sysfs.go` | interface discovery from `/sys/class/net` (`FS` seam) |
+| `run.go` | `Runner`: `Run` and `Start` for external commands |
+| `ether.go` | ethernet: carrier, DHCP, link-local fallback |
+| `store.go` | `/data/wifi.json` with PBKDF2-SHA1 PSKs, atomic writes |
+| `wifi.go` | wpa_supplicant config, supervision, status/scan parsing |
+| `ap.go` | hostapd + dnsmasq setup AP, setup key from `wat.txt` |
+| `policy.go` | `next(state, inputs)` pure state machine |
+| `linux.go` | managed mode: discovery, loop, `Manager` methods |
+| `clock.go` | wait for a sane clock before WhatsApp connects |
+| `mdns/` | in-binary responder for `wa.local` |
+
+Behaviour:
+
+- **Ethernet**: on carrier up, `udhcpc -n` for 15 s; no lease → an IPv4
+  link-local address that passed 2 ARP probes (`arping -D`), retried from a
+  MAC hash on collision; DHCP is retried every 60 s and the link-local
+  address is dropped on success. Carrier down → `ip addr flush`.
+- **WiFi**: config in `/run/wat/wpa.conf`, SSIDs written as hex so no
+  quoting bug is possible; `wpa_supplicant` is supervised and restarted when
+  it dies; connect = poll `wpa_cli status` for `COMPLETED` (45 s) then DHCP.
+- **Setup AP**: `WA-Setup-XXXX` (WPA2, key from `setup_ap_key=` in the boot
+  partition's `wat.txt`, fallback `wa-setup-<6 mac hex>`), `192.168.4.1/24`,
+  dnsmasq answers every name with the device address and hands out DHCP
+  option 114. No routing to the LAN.
+- **Captive portal**: while the AP runs, the OS connectivity-check paths
+  (`/generate_204`, `/hotspot-detect.html`, …) and requests for a foreign
+  `Host` answer `302 → http://192.168.4.1/`.
+- **Policy** (`next`): states `off → connecting → connected | ap`. With
+  `auto`, the AP runs while unpaired or while nothing else works; a failed
+  client connect goes to the AP (unpaired / no ethernet) or back to `off`
+  with a 5 min retry; an idle AP with saved networks goes back to client mode
+  after 5 min when one of them is visible. `always`/`never` override.
+- **mDNS**: answers `A` for `wa.local` on every interface with that
+  interface's IPv4 (TTL 120, cache-flush), unicast when the query asks for
+  it; a conflicting responder makes it rename to `wa-2.local`, `wa-3.local`.
+- **Clock**: before connecting, wait until `now > buildTime` (embedded with
+  `-X main.buildTime`) and, in managed mode, `adjtimex` reports `STA_UNSYNC`
+  cleared; give up after 2 minutes with a warning; `!status` and the Status
+  page then show "clock not synced".
+- **Reset**: `!reset` and the web factory reset call `Manager.Erase()`, which
+  deletes `wifi.json`.
 
 ## 8. Storage
 

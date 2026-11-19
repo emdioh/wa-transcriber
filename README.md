@@ -48,7 +48,24 @@ docker run -it -p 8080:80 -v wa-data:/data wa-transcriber
 | `-pair-phone` | `WAT_PAIR_PHONE` | (QR) |
 | `-log-level` | `WAT_LOG_LEVEL` | `info` |
 | `-listen` | `WAT_LISTEN` | `:80` (empty: no web UI) |
-| `-network` | `WAT_NETWORK` | `none` (`managed` is not implemented yet) |
+| `-network` | `WAT_NETWORK` | `none` (`managed` on the image) |
+
+## Network
+
+With `-network managed` the binary owns the network interfaces (the image
+uses this; Docker and dev machines keep `none`):
+
+- **Ethernet**: DHCP, or a link-local address (169.254/16) when there is no
+  DHCP server, so a direct cable to a laptop works.
+- **WiFi**: networks saved from the Network page; the passphrase is turned
+  into the WPA PSK immediately and never stored.
+- **Setup access point**: `WA-Setup-XXXX` (WPA2) with a captive portal, so a
+  phone that joins it lands on the web UI. The key comes from
+  `setup_ap_key=` in `wat.txt` on the boot partition; without the file a
+  fallback key `wa-setup-<6 hex>` derived from the MAC is used (a warning is
+  logged).
+- **`wa.local`** resolves on the LAN through mDNS.
+- `!reset` also forgets the saved WiFi networks.
 
 ## Transcription settings
 
