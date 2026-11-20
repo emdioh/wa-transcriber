@@ -8,7 +8,8 @@ BeagleBone Black) and Docker.
 - [docs/STATUS.md](docs/STATUS.md): what is done and verified, known limitations
 - [docs/PLAN.md](docs/PLAN.md): remaining milestones, step by step, with exit criteria
 
-Status: milestones 1, 3 and 4 done (see [STATUS.md](docs/STATUS.md)).
+Status: milestones 1, 3, 4, 5 (code), 6 (build side) and 7 (workflows; a CI
+run and a real image build are still pending) — see [STATUS.md](docs/STATUS.md).
 
 ## Build
 
@@ -39,8 +40,32 @@ Docker:
 
 ```bash
 docker build -t wa-transcriber .
-docker run -it -p 8080:80 -v wa-data:/data wa-transcriber
+docker run -d --restart unless-stopped -p 8080:8080 -v wa-data:/data wa-transcriber
 ```
+
+or the published image, built for amd64, arm64 and armv7:
+
+```bash
+docker run -d --restart unless-stopped -p 8080:8080 \
+  -v wa-data:/data ghcr.io/emdioh/wa-transcriber
+```
+
+The container runs as uid 65532 and listens on `:8080` (a non-root process
+cannot bind `:80`). A fresh named volume gets the right ownership; for a bind
+mount run `sudo chown -R 65532:65532 <dir>` first, otherwise the container
+cannot create its session. `docker inspect` shows the health status: the
+image probes `GET /healthz` with `-healthcheck`, which works without a
+session and also while the setup access point runs.
+
+On Docker the network manager stays off (`WAT_NETWORK=none`), so the device
+cannot discover the address clients use. Set `public_url` in `config.json`
+to have `!status` list it first:
+
+```json
+{ "public_url": "https://wa.example.com" }
+```
+
+It must start with `http://` or `https://`.
 
 | Flag | Env | Default |
 |---|---|---|
@@ -50,6 +75,7 @@ docker run -it -p 8080:80 -v wa-data:/data wa-transcriber
 | `-listen` | `WAT_LISTEN` | `:80` (empty: no web UI) |
 | `-watchdog` | `WAT_WATCHDOG` | empty (disabled); the images pass `/dev/watchdog` |
 | `-coord-claims` | `WAT_COORD_CLAIMS` | off; see [Multi-transcriber](#multi-transcriber) |
+| `-healthcheck` | — | probe the local UI and exit 0/1 (used by the image's `HEALTHCHECK`) |
 | `-network` | `WAT_NETWORK` | `none` (`managed` on the image) |
 
 ## Flashing an SD card

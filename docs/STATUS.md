@@ -1,6 +1,6 @@
 # Status
 
-Last update: 2026-11-19.
+Last update: 2026-11-20.
 
 ## Milestones
 
@@ -14,7 +14,7 @@ Last update: 2026-11-19.
 | M5 | Network manager, code (ethernet, WiFi, setup AP, mDNS, clock) | ✅ done (unit tests with scripted fakes) |
 | M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
 | M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 images build (Pi 2 38.6 MB gz, BBB 47.8 MB gz); runtime criteria need the boards |
-| M7 | CI, Docker image, releases | ⏳ not started (no hardware needed) |
+| M7 | CI, Docker image, releases | 🔄 code, workflows and docs done; CI run and a real image build still needed |
 | M8 | Small items (reply language, public URL in UI, health check) | ⏳ not started |
 
 ## Verified on real devices (by the owner)
@@ -31,10 +31,15 @@ Last update: 2026-11-19.
 - `!password` deleting the command message for everyone.
 - `!reset` end to end (logout + erase + re-exec).
 - Self-chat detection for single-member groups.
-- The Docker image (never built: no Docker in the development sandbox).
+- The Docker image: the scratch image now runs as uid 65532, listens on
+  `:8080` and has a `/healthz` + `-healthcheck` probe (the probe is tested
+  locally), but it has never been built or run: no Docker daemon in the
+  development sandbox. The first real build is the release workflow.
 - The images themselves: both build and their partitions were inspected offline
   (contents, init scripts, binary present), but neither has ever been booted.
   The runtime criteria in M6 and every scenario in M5b need the boards.
+- Both GitHub workflows: they are written but have not run yet (CI on the
+  first push, release on the first `v*` tag).
 - Everything in `internal/netmgr` beyond unit tests: the managed mode has never
   run on real hardware (no accessible network stack in the sandbox). The
   commands it issues are tested with scripted fakes only. Milestone **M5b**
