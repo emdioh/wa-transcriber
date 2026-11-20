@@ -118,6 +118,18 @@ grep -q 'sfdisk --append --no-reread' "$OVL/etc/init.d/S01data" ||
 	fail "S01data must call sfdisk --append --no-reread"
 grep -q 'partx -a' "$OVL/etc/init.d/S01data" ||
 	fail "S01data must make the kernel see the new partition (partx -a)"
+# The label lookup goes through blkid and failed on the board even when the
+# label was there: mount the device itself.
+grep -q 'mount -t ext4 -o noatime,nodev,nosuid "\$datadev" /data' "$OVL/etc/init.d/S01data" ||
+	fail "S01data must mount \$datadev at /data, not LABEL=DATA"
+grep -q '/var/lib\ttmpfs\|/var/lib.*tmpfs' "$OVL/etc/fstab" ||
+	fail "fstab must mount a tmpfs on /var/lib (seedrng writes there)"
+# Buildroot treats the local package source as immutable, so the board
+# targets must dirclean it or the image keeps the first binary it ever had.
+for board in rpi2 bbb; do
+	grep -q "wa-transcriber-dirclean" "$HERE/Makefile" ||
+		fail "os/Makefile must dirclean the transcriber package before building"
+done
 # /run/lock is on the tmpfs that "mount -a" mounts, so the mkdir comes after.
 a=$(grep -n '^::sysinit:/bin/mount -a$' "$OVL/etc/inittab" | cut -d: -f1)
 b=$(grep -n 'mkdir -p /run/lock' "$OVL/etc/inittab" | cut -d: -f1)

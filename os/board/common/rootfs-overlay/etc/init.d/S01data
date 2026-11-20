@@ -61,8 +61,15 @@ fi
 
 # A partition that exists but carries no filesystem (power cut during the
 # first boot) is formatted here; an existing DATA filesystem is never
-# touched.
-if ! blkid "$datadev" | grep -q 'LABEL="DATA"'; then
+# touched, and a foreign filesystem is left alone.
+fs=$(blkid -o value -s TYPE "$datadev" 2>/dev/null)
+label=$(blkid -o value -s LABEL "$datadev" 2>/dev/null)
+log "$datadev: type=${fs:-none} label=${label:-none}"
+if [ "$label" != "DATA" ]; then
+	if [ -n "$fs" ]; then
+		log "$datadev carries $fs but no DATA label, leaving it alone"
+		exit 0
+	fi
 	log "formatting $datadev as DATA"
 	if ! mkfs.ext4 -q -L DATA "$datadev"; then
 		log "mkfs.ext4 failed, /data stays unmounted"
@@ -71,8 +78,18 @@ if ! blkid "$datadev" | grep -q 'LABEL="DATA"'; then
 fi
 
 mkdir -p /data
-if ! mount /data; then
-	log "mounting /data failed"
-	exit 0
+# Mount the device, not LABEL=DATA: the tag lookup goes through blkid and
+# failed even when the label was on the partition.
+if mount -t ext4 -o noatime,nodev,nosuid "$datadev" /data; then
+	log "DATA mounted from $datadev"
+else
+	# A filesystem interrupted by a power cut is repaired once, then
+	# mounted again; a healthy one is never touched (e2fsck -p exits 0).
+	log "mounting $datadev failed, checking the filesystem once"
+	if e2fsck -p "$datadev" && mount -t ext4 -o noatime,nodev,nosuid "$datadev" /data; then
+		log "DATA mounted from $datadev after e2fsck"
+	else
+		log "mounting $datadev at /data failed, /data stays unmounted"
+		exit 0
+	fi
 fi
-log "DATA mounted from $datadev"

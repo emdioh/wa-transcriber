@@ -41,7 +41,18 @@ prebuilt: $(GO_DIST)
 	cp $(GO_DIST) prebuilt/wa-transcriber-linux-armv7
 	@ls -l prebuilt/wa-transcriber-linux-armv7
 
-$(GO_DIST):
+# Buildroot sees a "local" package source as immutable: without this the
+# image keeps whatever binary the first build copied (the board once booted
+# a binary three commits old). The board targets run wa-transcriber-dirclean
+# before building for that reason.
+
+# Rebuild the binary whenever the Go sources change: os/prebuilt is a plain
+# copy, and a stale copy here put a three-commit-old binary on a board.
+GO_SOURCES := $(shell find $(CURDIR)/.. -name '*.go' -not -path '*/_output/*' \
+	-not -path '*/dist/*' -not -path '*/data/*' 2>/dev/null) \
+	$(CURDIR)/../go.mod $(CURDIR)/../go.sum
+
+$(GO_DIST): $(GO_SOURCES)
 	$(MAKE) -C .. build-arm7
 
 # --- Buildroot -------------------------------------------------------------
@@ -60,11 +71,13 @@ $(BUILDROOT_DIR)/.stamp-extracted: $(BUILDROOT_TARBALL)
 
 rpi2: check buildroot prebuilt
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi2) BR2_EXTERNAL=$(BR2_EXTERNAL) wat_rpi2_defconfig
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi2) BR2_EXTERNAL=$(BR2_EXTERNAL) wa-transcriber-dirclean
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi2) BR2_EXTERNAL=$(BR2_EXTERNAL) -j$(JOBS)
 	sh $(CURDIR)/mkimage.sh rpi2 $(OUT_rpi2)
 
 bbb: check buildroot prebuilt
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_bbb) BR2_EXTERNAL=$(BR2_EXTERNAL) wat_bbb_defconfig
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_bbb) BR2_EXTERNAL=$(BR2_EXTERNAL) wa-transcriber-dirclean
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_bbb) BR2_EXTERNAL=$(BR2_EXTERNAL) -j$(JOBS)
 	sh $(CURDIR)/mkimage.sh bbb $(OUT_bbb)
 

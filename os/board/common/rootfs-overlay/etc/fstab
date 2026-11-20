@@ -7,6 +7,7 @@ tmpfs		/dev/shm	tmpfs	mode=1777		0	0
 tmpfs		/tmp		tmpfs	defaults,nosuid,nodev	0	0
 tmpfs		/run		tmpfs	defaults,nosuid,nodev	0	0
 tmpfs		/var/log	tmpfs	defaults,nosuid,nodev	0	0
+tmpfs		/var/lib	tmpfs	defaults,nosuid,nodev	0	0
 tmpfs		/var/lib/misc	tmpfs	defaults,nosuid,nodev	0	0
 # The DATA partition is created on first boot by /etc/init.d/S01data and
 # mounted here from then on.
