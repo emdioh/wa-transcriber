@@ -10,12 +10,15 @@ build:
 	$(GOBUILD) -o wa-transcriber $(PKG)
 
 build-arm7:
+	mkdir -p dist
 	GOOS=linux GOARCH=arm GOARM=7 $(GOBUILD) -o dist/wa-transcriber-linux-armv7 $(PKG)
 
 build-arm64:
+	mkdir -p dist
 	GOOS=linux GOARCH=arm64 $(GOBUILD) -o dist/wa-transcriber-linux-arm64 $(PKG)
 
 build-amd64:
+	mkdir -p dist
 	GOOS=linux GOARCH=amd64 $(GOBUILD) -o dist/wa-transcriber-linux-amd64 $(PKG)
 
 dist: build-arm7 build-arm64 build-amd64
