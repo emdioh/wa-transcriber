@@ -79,7 +79,8 @@ func run() error {
 	}
 	log := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
-	log.Info("starting", "version", version, "data", *dataDir, "mem_total_mb", memTotal>>20)
+	log.Info("starting", "version", version, "data", *dataDir, "listen", *listen,
+		"mem_total_mb", memTotal>>20, "mem_limit_mb", memoryLimitMB())
 
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
 		return err
@@ -117,10 +118,17 @@ func run() error {
 	}
 
 	tr := transcribe.New(cfg, client, log)
-	if s := tr.Settings(); s.Configured() {
-		log.Info("transcription configured", "provider", s.Provider, "model", s.Model,
-			"translate_to", s.TranslateTo, "keep", s.Keep)
-	} else {
+	ts := tr.Settings()
+	// Effective settings without secrets: never the API key or the password.
+	log.Info("effective settings",
+		"reply_language", config.NormalizeLanguage(cfg.Get().Language),
+		"provider", ts.Provider,
+		"model", ts.Model,
+		"keep_languages", ts.Keep,
+		"translate_to", ts.TranslateTo,
+		"network", *networkMode,
+		"coord_claims", *claimMode)
+	if !ts.Configured() {
 		log.Warn("transcription not configured: set the provider and API key " +
 			"(web UI, config.json or WAT_PROVIDER / WAT_API_KEY)")
 	}
@@ -255,6 +263,10 @@ func setMemoryLimit(memTotal uint64) {
 	limit := min(max(memTotal/4, 32<<20), 256<<20)
 	debug.SetMemoryLimit(int64(limit))
 }
+
+// memoryLimitMB is the soft heap limit currently in effect (GOMEMLIMIT
+// included). debug.SetMemoryLimit(-1) returns it without changing it.
+func memoryLimitMB() int64 { return debug.SetMemoryLimit(-1) >> 20 }
 
 // listenPort extracts the port of a -listen address ("" when disabled).
 func listenPort(addr string) string {
