@@ -131,6 +131,12 @@ red.
 
 **Gate in**: M7 done.
 
+**Status (2026-11-20): done in code.** `language` (`en`/`it`) with
+`internal/bot/i18n.go` and a completeness test, the language select on the
+System page, `public_url` on the Network page when network management is off,
+and one startup log line with the effective non-secret settings. Still open:
+the manual Italian walkthrough on a phone.
+
 ### Steps
 
 1. **Reply language**.

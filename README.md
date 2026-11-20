@@ -59,14 +59,10 @@ image probes `GET /healthz` with `-healthcheck`, which works without a
 session and also while the setup access point runs.
 
 On Docker the network manager stays off (`WAT_NETWORK=none`), so the device
-cannot discover the address clients use. Set `public_url` in `config.json`
-to have `!status` list it first:
-
-```json
-{ "public_url": "https://wa.example.com" }
-```
-
-It must start with `http://` or `https://`.
+cannot discover the address clients use. Set it on the Network page ("Address
+people use to reach this UI", stored as top-level `public_url` in
+`config.json`) and `!status` lists it first. It must start with `http://` or
+`https://`.
 
 | Flag | Env | Default |
 |---|---|---|
@@ -166,7 +162,9 @@ With `translate_to` set, a voice note in any language that is not in
 
 ## Commands
 
-Only messages **you** send are commands.
+Only messages **you** send are commands. Replies are English by default;
+pick English or Italiano on the System page (top-level `language` in
+`config.json`, `en` or `it`).
 
 | Command | Where |
 |---|---|

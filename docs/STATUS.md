@@ -15,7 +15,7 @@ Last update: 2026-11-20.
 | M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
 | M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 images build (Pi 2 38.6 MB gz, BBB 47.8 MB gz); runtime criteria need the boards |
 | M7 | CI, Docker image, releases | 🔄 CI green and v0.1.0 released; the image is published but has never been run |
-| M8 | Small items (reply language, public URL in UI, health check) | ⏳ not started |
+| M8 | Small items (reply language, public URL in UI, startup log) | ✅ code and tests done; manual Italian check on a phone pending |
 
 ## Verified on real devices (by the owner)
 
@@ -46,6 +46,9 @@ Last update: 2026-11-20.
   three binaries and `SHA256SUMS`, plus the multi-arch image. The size
   logging step was added after that tag, so it is first exercised on the
   next release.
+- Italian bot replies: every reply has an Italian translation and unit tests
+  exercise `!help`, `!status`, `!transcription`, `!t` and the error replies,
+  but nobody has read them in a real chat yet.
 - Everything in `internal/netmgr` beyond unit tests: the managed mode has never
   run on real hardware (no accessible network stack in the sandbox). The
   commands it issues are tested with scripted fakes only. Milestone **M5b**
@@ -63,7 +66,8 @@ Last update: 2026-11-20.
 - Until a password is set, whoever opens the UI first sets it. Set it right
   away (or with `!password` from WhatsApp).
 - Logs are lost on restart (RAM only, by design).
-- Bot replies are English only (M8 adds a setting).
+- Bot replies exist in English and Italian (System page). A new reply needs
+  both entries: `TestMessagesComplete` fails otherwise.
 - With two transcribers in one chat, both answer only until the M2 result
   allows claims to be turned on (`-coord-claims`). In observe-only mode the
   duplicate is accepted by design.
