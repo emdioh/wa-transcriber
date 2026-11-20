@@ -52,8 +52,10 @@ was reset, so it sits in setup mode with no config.
   `repo` and `workflow` scopes, and the git remote is
   `https://github.com/emdioh/wa-transcriber`. Push branches, create/edit
   pull requests, watch or re-run CI (`gh run view --log-failed`), tag
-  releases and inspect release assets directly. The working branch is
-  `claude/brave-gates-yijj1l`; `main` is the protected/default branch.
+  releases and inspect release assets directly. `main` is the default and
+  working branch; `claude/brave-gates-yijj1l` is the historical feature
+  branch that was fast-forwarded into `main` on 2026-11-20. Branch
+  protection is not enabled yet.
 - **Docker: no daemon** (`/var/run/docker.sock` gives permission denied),
   but **rootless Podman works** for building and running:
   `podman build --format docker -t wa-transcriber:test .` (the default OCI
