@@ -38,7 +38,8 @@ nothing else listens there. A shell is opt-in through `wat.txt`:
 
 | `console=` | Shell on |
 |---|---|
-| `off` (default) | nothing |
+| `all` (what these images ship) | serial + USB + HDMI |
+| `off` | nothing |
 | `serial` | the UART header: `/dev/ttyS0` on the BeagleBone (J1, 115200 8N1, 3.3 V USB-TTL adapter), `/dev/ttyAMA0` on the Raspberry Pi 2 |
 | `usb` | the USB client port as a CDC-ACM gadget, `/dev/ttyGS0`; on a Linux host it appears as `/dev/ttyACM0` |
 | `hdmi` | `tty1`, i.e. the HDMI output driven by a USB keyboard on the host port |
@@ -47,8 +48,10 @@ nothing else listens there. A shell is opt-in through `wat.txt`:
 
 `S02console` starts a busybox `getty` in a respawn loop and logs every
 decision to `/dev/kmsg`, so the kernel prints it on every active console.
-**The root account has no password**, so anyone who can reach the port gets a
-root shell: turn it on for a card you keep, and off again afterwards. The USB
+The template ships `console=all` while the boot and network work is being
+validated. **The root account has no password**, so anyone who can reach one
+of those ports has a root shell: set `console=off` before the device is used
+by anyone else. The USB
 path needs the port in peripheral mode (`ls /sys/class/udc`); the BeagleBone
 has `CONFIG_USB_CONFIGFS_ACM=y` built in, the Raspberry Pi 2 has no device
 controller and logs `no USB device controller`.

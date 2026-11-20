@@ -97,8 +97,9 @@ sudo dd if=os/_output/rpi2/images/sdcard.img of=/dev/sdX bs=4M conv=fsync status
 ```
 
 Before ejecting, edit `wat.txt` on the small FAT partition (`setup_ap_key`,
-`country`, and `console=` if you want a login shell on the board — off by
-default, it gives a root shell with no password; see
+`country`, and `console=`: the images ship `console=all`, a login shell on
+HDMI, the USB port and the UART header, with **root and no password** — set
+`console=off` for a device anyone else can reach. See
 [os/README.md](os/README.md#debug-console)). The partition is mounted
 read-only at `/boot` and the file is read at boot. First boot: the board
 publishes `WA-Setup-XXXX`, a phone joins

@@ -43,13 +43,15 @@ if ! wait_for_block "$datadev"; then
 	# start=(first free), size=rest of the disk, type=83 (Linux).
 	# Let sfdisk re-read the table itself (it adds the partition with the
 	# BLKPG ioctl, which works while the disk is in use and mounted).
-	if ! printf ',+,83\n' | sfdisk --append "$disk"; then
+	# --no-reread: the root filesystem is on this disk, so sfdisk refuses to
+	# touch it while it is in use. The kernel learns about the new partition
+	# through BLKPG instead (partx -a), which works on a mounted disk; a full
+	# BLKRRPART (blockdev --rereadpt) would come back with EBUSY.
+	if ! printf ',+,83\n' | sfdisk --append --no-reread "$disk"; then
 		log "sfdisk failed, /data stays unmounted"
 		exit 0
 	fi
-	# Belt and braces: if the ioctl path did not create the node, ask the
-	# kernel to re-read the table (may fail with EBUSY, hence "|| true").
-	blockdev --rereadpt "$disk" 2>/dev/null || true
+	partx -a --nr 3 "$disk" 2>/dev/null || true
 	mdev -s 2>/dev/null || true
 	if ! wait_for_block "$datadev"; then
 		log "$datadev did not appear, /data stays unmounted"

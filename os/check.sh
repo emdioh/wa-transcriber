@@ -60,6 +60,9 @@ for board in rpi2 bbb; do
 		fail "$board: wpa_supplicant is not enabled"
 	grep -q '^BR2_PACKAGE_DNSMASQ=y$' "$defconfig" ||
 		fail "$board: dnsmasq (setup AP DHCP/DNS) is not enabled"
+	# S01data adds the DATA partition to the running kernel with partx.
+	grep -q '^BR2_PACKAGE_UTIL_LINUX_PARTX=y$' "$defconfig" ||
+		fail "$board: partx is missing (needed to add the DATA partition)"
 
 	# Every file the defconfig points at must exist.
 	for ref in $(sed -n 's/.*BR2_EXTERNAL_WAT_PATH)\([^"]*\)".*/\1/p' "$defconfig"); do
@@ -107,6 +110,19 @@ grep -q 'wa-transcriber -data /data -network managed -listen :80' "$OVL/etc/init
 grep -q 'sysinit:/etc/init.d/rcS' "$OVL/etc/inittab" ||
 	fail "inittab does not run rcS"
 grep -q '^LABEL=DATA' "$OVL/etc/fstab" || fail "fstab does not mount the DATA partition"
+grep -q '^LABEL=DATA.*noauto' "$OVL/etc/fstab" ||
+	fail "LABEL=DATA must be noauto: S01data mounts it after creating it"
+# sfdisk refuses to touch a disk in use without --no-reread, and the partition
+# is handed to the kernel with partx (BLKPG) because the disk is mounted.
+grep -q 'sfdisk --append --no-reread' "$OVL/etc/init.d/S01data" ||
+	fail "S01data must call sfdisk --append --no-reread"
+grep -q 'partx -a' "$OVL/etc/init.d/S01data" ||
+	fail "S01data must make the kernel see the new partition (partx -a)"
+# /run/lock is on the tmpfs that "mount -a" mounts, so the mkdir comes after.
+a=$(grep -n '^::sysinit:/bin/mount -a$' "$OVL/etc/inittab" | cut -d: -f1)
+b=$(grep -n 'mkdir -p /run/lock' "$OVL/etc/inittab" | cut -d: -f1)
+[ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] ||
+	fail "inittab must mount -a before creating /run/lock (read-only root)"
 grep -q 'sysfs' "$OVL/etc/fstab" || fail "fstab does not mount /sys (needed by mdev and the network manager)"
 # The boot partition carries wat.txt: without the mount the binary silently
 # falls back to its defaults.
@@ -160,8 +176,10 @@ grep -q '^setup_ap_key=' "$WAT" || fail "wat.txt has no setup_ap_key"
 grep -q '^country=' "$WAT" || fail "wat.txt has no country"
 key=$(sed -n 's/^setup_ap_key=//p' "$WAT")
 [ ${#key} -ge 8 ] || fail "the setup_ap_key template is shorter than 8 characters"
-grep -q '^console=off$' "$WAT" ||
-	fail "wat.txt must ship with the debug console off (console=off)"
+grep -q '^console=\(off\|serial\|usb\|hdmi\|both\|all\)$' "$WAT" ||
+	fail "wat.txt needs a valid console= value"
+grep -q '^console=all$' "$WAT" ||
+	fail "wat.txt should ship with console=all while the images are being validated"
 ok "wat.txt template"
 
 # --- boot console ----------------------------------------------------------

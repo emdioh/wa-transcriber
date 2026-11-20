@@ -7,8 +7,10 @@
 
 # Startup the system
 ::sysinit:/bin/mount -t proc proc /proc
-::sysinit:/bin/mkdir -p /dev/pts /dev/shm /run/lock/subsys /tmp /var/log
+::sysinit:/bin/mkdir -p /dev/pts /dev/shm
 ::sysinit:/bin/mount -a
+# /run/lock lives on the tmpfs mounted by "mount -a" above.
+::sysinit:/bin/mkdir -p /run/lock/subsys
 null::sysinit:/bin/ln -sf /proc/self/fd /dev/fd
 null::sysinit:/bin/ln -sf /proc/self/fd/0 /dev/stdin
 null::sysinit:/bin/ln -sf /proc/self/fd/1 /dev/stdout
@@ -20,8 +22,9 @@ null::sysinit:/bin/ln -sf /proc/self/fd/2 /dev/stderr
 # The transcriber: one process, restarted when it exits.
 ::respawn:/usr/bin/wa-transcriber -data /data -network managed -listen :80 -watchdog /dev/watchdog
 
-# Serial console for debugging (uncomment on the serial header).
-#ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100
+# Debug shell: prefer the console= line in wat.txt (S02console), which also
+# covers the USB gadget and HDMI. This manual line is a last resort.
+#ttyS0::respawn:/sbin/getty -L 115200 ttyS0 vt100
 
 # Stuff to do before rebooting
 ::shutdown:/etc/init.d/rcK
