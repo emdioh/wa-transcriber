@@ -78,7 +78,7 @@ CI runs gofmt, vet, `go test -race ./...` and `make dist` on every push. Tag
 image (`ghcr.io/emdioh/wa-transcriber`, tags `v0.1.0`/`0.1.0`/`latest`, now
 private because the repository is private). Image sizes are now
 logged per platform (`v0.1.1`: 9.1 MB amd64, 8.4 MB arm64, 8.7 MB armv7
-compressed), so the < 30 MB criterion holds. The container now runs
+compressed; `docker image ls` 24.5 MB), so the < 30 MB criterion holds. The container now runs
 healthy on amd64 and shows the pairing QR (owner check); still open: an
 end-to-end transcription, the `!reset` re-exec, restart keeping the pairing,
 an arm host, and branch protection on `main`.
