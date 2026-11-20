@@ -84,7 +84,10 @@ end-to-end transcription, the `!reset` re-exec, restart keeping the pairing,
 an arm host, and branch protection on `main`. One real-world catch found on
 the owner's host: a volume created by the old root image cannot be written by
 uid 65532, so startup now fails with the exact `chown` command instead of
-serving a UI whose saves fail.
+serving a UI whose saves fail. Podman re-checked the flow (fresh volume owner
+65532, healthy, all settings persist across restart, root-owned volume fails
+fast) and exposed a 20 GB Docker build context from `os/_output`, now
+excluded in `.dockerignore`.
 
 ### Steps
 

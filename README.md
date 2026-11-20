@@ -44,6 +44,9 @@ docker build -t wa-transcriber .
 docker run -d --restart unless-stopped -p 8080:8080 -v wa-data:/data wa-transcriber
 ```
 
+With Podman use `podman build --format docker`: the default OCI format drops
+the `HEALTHCHECK` instruction (Docker uses the docker format and keeps it).
+
 or the published image, built for amd64, arm64 and armv7:
 
 ```bash

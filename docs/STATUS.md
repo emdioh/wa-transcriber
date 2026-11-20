@@ -14,7 +14,7 @@ Last update: 2026-11-20.
 | M5 | Network manager, code (ethernet, WiFi, setup AP, mDNS, clock) | ✅ done (unit tests with scripted fakes) |
 | M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
 | M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 images build (Pi 2 38.6 MB gz, BBB 47.8 MB gz); runtime criteria need the boards |
-| M7 | CI, Docker image, releases | 🔄 CI green, v0.1.0/v0.1.1 released, 24.5 MB image (8.4–9.1 MB compressed); container runs healthy and pairs, full runtime flow still open |
+| M7 | CI, Docker image, releases | 🔄 CI green, v0.1.0/v0.1.1 released, 24.5 MB image (8.4–9.1 MB compressed); container flow verified with Podman except pairing/transcription/reset |
 | M8 | Small items (reply language, public URL in UI, startup log) | ✅ code and tests done; manual Italian check on a phone pending |
 
 ## Verified on real devices (by the owner)
@@ -38,9 +38,15 @@ Last update: 2026-11-20.
   CA certificates; `docker image ls` reports 24.5 MB, under the 30 MB
   target). On amd64 the container starts as uid
   65532, `docker inspect` reports `healthy`, the setup page opens and the
-  pairing QR is shown (owner check, 2026-11-20). Still unverified in a
-  container: one end-to-end transcription, the `!reset` re-exec, a restart
-  keeping the volume pairing, and any arm host.
+  pairing QR is shown (owner check, 2026-11-20). Re-checked with Podman on
+  amd64: a fresh volume is owned by 65532, the health probe reports
+  `healthy`, the setup password, reply language, public URL and
+  transcription settings all save and survive a container restart, and a
+  deliberately root-owned volume exits with the `chown` hint instead of
+  starting. Still unverified in a container: one end-to-end transcription,
+  the `!reset` re-exec, a restart keeping an existing pairing, and any arm
+  host. The local build context used to include `os/_output` (20 GB), which
+  CI never saw; `.dockerignore` now excludes the Buildroot trees.
 - The multi-arch image is private, like the repository. Pulling it needs a
   `ghcr.io` token with `read:packages`.
 - Docker volumes first created by the pre-hardening image (root, `:80`) stay

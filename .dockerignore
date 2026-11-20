@@ -2,3 +2,8 @@
 data
 dist
 wa-transcriber
+# Buildroot's pinned source, per-board outputs and the copied binary: several
+# GB, useless for the Go build, and only present on a machine that built images.
+os/_buildroot
+os/_output
+os/prebuilt
