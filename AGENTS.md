@@ -18,12 +18,18 @@ Read them before larger changes.
   pull requests, watch or re-run CI (`gh run view --log-failed`), tag
   releases and inspect release assets directly. The working branch is
   `claude/brave-gates-yijj1l`; `main` is the protected/default branch.
-- **No Docker daemon**: `docker` is installed but
-  `/var/run/docker.sock` gives permission denied, so image builds and
-  container runs must be done by the owner (give exact commands instead of
-  claiming a Docker result). Same for anything needing a WhatsApp account,
-  a phone, a board, a WiFi dongle or real network interfaces: tests must use
-  the existing fakes/interfaces; ask the owner to run field tests.
+- **Docker: no daemon** (`/var/run/docker.sock` gives permission denied),
+  but **rootless Podman works** for building and running:
+  `podman build --format docker -t wa-transcriber:test .` (the default OCI
+  format drops `HEALTHCHECK`), `podman run -d --name wat -p 8080:8080
+  -v wat-data:/data wa-transcriber:test`, `podman logs wat`, and a `busybox`
+  helper to inspect volumes. Short image names need
+  `~/.config/containers/registries.conf` with
+  `unqualified-search-registries = ["docker.io"]`. The image is `scratch`,
+  so use a helper container, not `podman exec`, to look inside.
+- Anything needing a real WhatsApp account, a phone, a board, a WiFi dongle
+  or real network interfaces must be done by the owner: tests use the
+  existing fakes/interfaces.
 - Never commit `data/`, `dist/`, the built binary or secrets. Never log
   secrets (API keys, passwords, WiFi passphrases, setup AP key).
 

@@ -14,7 +14,7 @@ Last update: 2026-11-20.
 | M5 | Network manager, code (ethernet, WiFi, setup AP, mDNS, clock) | ✅ done (unit tests with scripted fakes) |
 | M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
 | M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 images build (Pi 2 38.6 MB gz, BBB 47.8 MB gz); runtime criteria need the boards |
-| M7 | CI, Docker image, releases | 🔄 CI green, v0.1.0/v0.1.1 released, 24.5 MB image (8.4–9.1 MB compressed); container flow verified with Podman except pairing/transcription/reset |
+| M7 | CI, Docker image, releases | 🔄 CI green, v0.1.0/v0.1.1 released, 24.5 MB image; container verified with Podman (setup, pairing, OpenRouter transcription, restart, health); `!reset` re-exec and an arm host still open |
 | M8 | Small items (reply language, public URL in UI, startup log) | ✅ code and tests done; manual Italian check on a phone pending |
 
 ## Verified on real devices (by the owner)
@@ -26,7 +26,8 @@ Last update: 2026-11-20.
 ## Covered by unit tests only (not yet seen working against the real service)
 
 - Translation flow and language detection, for each provider.
-- Gemini and OpenRouter specifically (whichever provider the owner did not use).
+- Gemini specifically (OpenRouter was verified with a real voice note on
+  2026-11-20, inside the container).
 - Pairing by phone number (code) from the web UI.
 - `!password` deleting the command message for everyone.
 - `!reset` end to end (logout + erase + re-exec).
@@ -41,12 +42,13 @@ Last update: 2026-11-20.
   pairing QR is shown (owner check, 2026-11-20). Re-checked with Podman on
   amd64: a fresh volume is owned by 65532, the health probe reports
   `healthy`, the setup password, reply language, public URL and
-  transcription settings all save and survive a container restart, and a
-  deliberately root-owned volume exits with the `chown` hint instead of
-  starting. Still unverified in a container: one end-to-end transcription,
-  the `!reset` re-exec, a restart keeping an existing pairing, and any arm
-  host. The local build context used to include `os/_output` (20 GB), which
-  CI never saw; `.dockerignore` now excludes the Buildroot trees.
+  transcription settings all save, a real pairing survives a container
+  restart (authenticated without a new QR), a voice note was transcribed
+  through OpenRouter, and a deliberately root-owned volume exits with the
+  `chown` hint instead of starting. Still unverified in a container: the
+  `!reset` re-exec and any arm host. The local build context used to include
+  `os/_output` (20 GB), which CI never saw; `.dockerignore` now excludes the
+  Buildroot trees.
 - The multi-arch image is private, like the repository. Pulling it needs a
   `ghcr.io` token with `read:packages`.
 - Docker volumes first created by the pre-hardening image (root, `:80`) stay
