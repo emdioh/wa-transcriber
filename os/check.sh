@@ -95,7 +95,8 @@ done
 
 OVL="$HERE/board/common/rootfs-overlay"
 for f in etc/inittab etc/fstab etc/init.d/S00boot etc/init.d/S01data \
-	etc/init.d/S02console etc/init.d/S40ntpd etc/init.d/S90watchdog; do
+	etc/init.d/S02console etc/init.d/S40ntpd etc/init.d/S90watchdog \
+	usr/lib/wat/sd.sh; do
 	[ -f "$OVL/$f" ] || fail "missing overlay file $f"
 done
 for s in "$OVL"/etc/init.d/S*; do
@@ -113,11 +114,43 @@ grep -q 'mount .*\-t vfat .* /boot' "$OVL/etc/init.d/S00boot" ||
 	fail "S00boot does not mount the boot partition at /boot"
 grep -q 'mkdir -p "\$TARGET_DIR/boot"' "$HERE/board/common/post-build.sh" ||
 	fail "post-build.sh does not create the /boot mountpoint"
+for s in S00boot S01data; do
+	grep -q '/usr/lib/wat/sd.sh' "$OVL/etc/init.d/$s" ||
+		fail "$s does not use the shared SD-card helpers"
+done
+# The kernel names the root filesystem /dev/root in /proc/mounts, so parsing
+# that file is the bug that left /boot and /data unmounted on real hardware.
+if grep -lE 'awk[^|]*proc/mounts' "$OVL"/etc/init.d/S* >/dev/null 2>&1; then
+	fail "an init script parses /proc/mounts: use wat_rootdev from sd.sh"
+fi
 for tty in ttyS0 ttyAMA0 ttyGS0 tty1; do
 	grep -q "$tty" "$OVL/etc/init.d/S02console" ||
 		fail "S02console does not handle $tty"
 done
 ok "rootfs overlay"
+
+# --- SD card helpers (unit test, no hardware) ------------------------------
+
+(
+	. "$OVL/usr/lib/wat/sd.sh"
+	for pair in /dev/mmcblk0p2:/dev/mmcblk0 /dev/mmcblk0p10:/dev/mmcblk0 \
+		/dev/sda2:/dev/sda /dev/nvme0n1p2:/dev/nvme0n1; do
+		got=$(wat_disk "${pair%%:*}")
+		[ "$got" = "${pair##*:}" ] || {
+			printf 'FAIL: wat_disk %s = %s, want %s\n' "${pair%%:*}" "$got" "${pair##*:}" >&2
+			false
+		}
+	done
+	[ "$(wat_part /dev/mmcblk0 3)" = /dev/mmcblk0p3 ] || {
+		echo "FAIL: wat_part /dev/mmcblk0 3" >&2
+		false
+	}
+	[ "$(wat_part /dev/sda 1)" = /dev/sda1 ] || {
+		echo "FAIL: wat_part /dev/sda 1" >&2
+		false
+	}
+) || fail "sd.sh helpers return the wrong device names"
+ok "sd.sh helpers"
 
 # --- wat.txt template ------------------------------------------------------
 
