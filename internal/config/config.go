@@ -22,6 +22,24 @@ type Config struct {
 	Web           Web           `json:"web"`
 	// PublicURL is shown by !status when the network is not managed (Docker).
 	PublicURL string `json:"public_url,omitempty"`
+	// Language is the language of the bot's WhatsApp replies ("en", "it").
+	Language string `json:"language,omitempty"`
+}
+
+// DefaultLanguage is used when Language is empty or unknown.
+const DefaultLanguage = "en"
+
+// Languages are the supported bot reply languages, in menu order.
+var Languages = []string{"en", "it"}
+
+// NormalizeLanguage returns lang when supported, DefaultLanguage otherwise.
+func NormalizeLanguage(lang string) string {
+	for _, l := range Languages {
+		if lang == l {
+			return lang
+		}
+	}
+	return DefaultLanguage
 }
 
 // Transcription settings.

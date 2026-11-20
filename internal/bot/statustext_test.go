@@ -3,6 +3,8 @@ package bot
 import (
 	"strings"
 	"testing"
+
+	"github.com/emdioh/wa-transcriber/internal/config"
 )
 
 func TestStatusTextWarnsAboutUnsyncedClock(t *testing.T) {
@@ -40,5 +42,15 @@ func TestStatusTextWithoutNetworkKeepsURLs(t *testing.T) {
 	got := e.bot.statusText()
 	if strings.Contains(got, "Interfaces:") || !strings.Contains(got, "192.168.1.40") {
 		t.Fatalf("unexpected status:\n%s", got)
+	}
+}
+
+func TestStatusTextShowsPublicURL(t *testing.T) {
+	e := newEnv(t)
+	if err := e.bot.Config.Update(func(c *config.Config) { c.PublicURL = "https://wa.example.com" }); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.bot.statusText(); !strings.Contains(got, "https://wa.example.com") {
+		t.Fatalf("public URL missing:\n%s", got)
 	}
 }

@@ -13,43 +13,47 @@ func (b *Bot) statusText() string {
 	cfg := b.Config.Get()
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "📟 wa-transcriber %s\n", b.Version)
-	wa := "offline"
+	fmt.Fprintf(&sb, b.t(msgStatusHeader), b.Version)
+	wa := b.t(msgStatusOffline)
 	if s.Connected {
-		wa = "online"
+		wa = b.t(msgStatusOnline)
 	}
 	if s.Account != "" {
-		wa += " as +" + s.Account
+		wa = b.t(msgStatusOnlineAs, s.Account)
 	}
-	fmt.Fprintf(&sb, "• WhatsApp: %s\n", wa)
-	fmt.Fprintf(&sb, "• Last message seen: %s\n", ago(s.LastMessage, now))
-	fmt.Fprintf(&sb, "• Last transcription: %s\n", ago(s.LastTranscription, now))
+	fmt.Fprintf(&sb, b.t(msgStatusWhatsApp), wa)
+	fmt.Fprintf(&sb, b.t(msgStatusLastMessage), b.ago(s.LastMessage, now))
+	fmt.Fprintf(&sb, b.t(msgStatusLastTranscription), b.ago(s.LastTranscription, now))
 
 	tr := cfg.Transcription
-	configured := "not configured"
+	configured := b.t(msgStatusNotConfigured)
 	if b.Transcriber != nil && b.Transcriber.Configured() {
 		configured = b.Transcriber.Describe()
 	}
-	fmt.Fprintf(&sb, "• Transcription: %s, global %s, %d chat override(s)\n",
-		configured, onoff(tr.Global), len(tr.Chats))
-	fmt.Fprintf(&sb, "• Uptime: %s\n", now.Sub(s.Started).Round(time.Second))
+	fmt.Fprintf(&sb, b.t(msgStatusTranscription),
+		configured, b.onoff(tr.Global), len(tr.Chats))
+	fmt.Fprintf(&sb, b.t(msgStatusUptime), now.Sub(s.Started).Round(time.Second))
 	if b.Coord != nil {
 		claims, stoodDown, tookOver, mode := b.Coord.Counters()
-		fmt.Fprintf(&sb, "• Coordination: %s, claims %d, stood down %d, took over %d\n",
-			mode, claims, stoodDown, tookOver)
+		modeText := b.t(msgModeObserve)
+		if mode == "claim" {
+			modeText = b.t(msgModeClaim)
+		}
+		fmt.Fprintf(&sb, b.t(msgStatusCoordination),
+			modeText, claims, stoodDown, tookOver)
 	}
 	if !s.ClockSynced {
-		sb.WriteString("• Clock: ⚠ not synced when WhatsApp was connected\n")
+		sb.WriteString(b.t(msgStatusClock))
 	}
 
 	if b.Network != nil {
 		if line := ifaceLine(b.Network.Interfaces()); line != "" {
-			fmt.Fprintf(&sb, "• Interfaces: %s\n", line)
+			fmt.Fprintf(&sb, b.t(msgStatusInterfaces), line)
 		}
 	}
 
 	if b.WebPort == "" {
-		sb.WriteString("• Web UI: disabled")
+		sb.WriteString(b.t(msgStatusWebDisabled))
 		return sb.String()
 	}
 	var urls []string
@@ -64,9 +68,9 @@ func (b *Bot) statusText() string {
 		}
 	}
 	if len(urls) == 0 {
-		urls = append(urls, "no network address")
+		urls = append(urls, b.t(msgStatusNoAddress))
 	}
-	fmt.Fprintf(&sb, "• Web UI:\n%s", strings.Join(urls, "\n"))
+	fmt.Fprintf(&sb, b.t(msgStatusWebHeader), strings.Join(urls, "\n"))
 	return sb.String()
 }
 
@@ -96,13 +100,13 @@ func webURL(ip, port string) string {
 	return "http://" + net.JoinHostPort(ip, port) + "/"
 }
 
-func ago(t, now time.Time) string {
+func (b *Bot) ago(t, now time.Time) string {
 	if t.IsZero() {
-		return "never"
+		return b.t(msgNever)
 	}
 	d := now.Sub(t)
 	if d < 0 {
 		d = 0
 	}
-	return fmt.Sprintf("%s (%s ago)", t.Local().Format("2006-01-02 15:04:05"), d.Round(time.Second))
+	return b.t(msgAgo, t.Local().Format("2006-01-02 15:04:05"), d.Round(time.Second))
 }

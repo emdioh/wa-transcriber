@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -339,7 +338,7 @@ func (b *Bot) transcribeText(ctx context.Context, v Voice) (string, error) {
 		return "", err
 	}
 	if strings.TrimSpace(text) == "" {
-		text = "(no speech recognised)"
+		text = b.t(msgNoSpeech)
 	}
 	return text, nil
 }
@@ -354,11 +353,11 @@ func (b *Bot) reportTranscribeError(ctx context.Context, cmd *Message, err error
 		if warn {
 			b.log().Warn("transcription not configured: voice notes are ignored")
 		}
-		b.reply(ctx, cmd, "⚠️ Transcription is not configured yet (open the web UI).")
+		b.reply(ctx, cmd, b.t(msgTranscriptionNotConfigured))
 		return
 	}
 	b.log().Error("transcription failed", "chat", cmd.Chat, "msg", cmd.Quoted.ID, "err", err)
-	b.reply(ctx, cmd, "⚠️ Transcription failed, try again later with !t.")
+	b.reply(ctx, cmd, b.t(msgTranscriptionFailed))
 }
 
 // postTranscription posts the text quoting the voice note.
@@ -396,7 +395,7 @@ func (b *Bot) onCommand(ctx context.Context, m *Message) {
 		case "!password":
 			b.cmdPassword(ctx, m, args)
 		case "!help":
-			b.reply(ctx, m, helpText)
+			b.reply(ctx, m, b.helpText())
 		}
 	}
 }
@@ -409,28 +408,9 @@ func lower(args []string) []string {
 	return out
 }
 
-const transcriptionUsage = "ℹ️ Commands:\n" +
-	"• !t (reply to a voice note): transcribe it\n" +
-	"• !transcription: show the state\n" +
-	"• !transcription on|off: auto-transcription in this chat\n" +
-	"• !transcription global on|off: default for all chats"
-
-const helpText = transcriptionUsage + "\n\n" +
-	"Only in this chat:\n" +
-	"• !status: device status\n" +
-	"• !password [new]: set the web UI password (random if omitted)\n" +
-	"• !reset: unlink WhatsApp and erase everything"
-
-func onoff(v bool) string {
-	if v {
-		return "on"
-	}
-	return "off"
-}
-
 func (b *Bot) cmdT(ctx context.Context, m *Message) {
 	if m.Quoted == nil || m.Quoted.Voice == nil {
-		b.reply(ctx, m, "ℹ️ Reply to a voice note with !t to transcribe it.")
+		b.reply(ctx, m, b.t(msgReplyToVoice))
 		return
 	}
 	b.transcribe(ctx, m.Chat, Voice{Chat: m.Chat, Quote: m.Quoted.Quote, Audio: m.Quoted.Voice}, m)
@@ -440,13 +420,13 @@ func (b *Bot) cmdTranscription(ctx context.Context, m *Message, args []string) {
 	switch {
 	case len(args) == 0:
 		tr := b.Config.Get().Transcription
-		chat := "not set"
+		chat := b.t(msgNotSet)
 		if v, ok := tr.Override(m.chatKeys()...); ok {
-			chat = onoff(v)
+			chat = b.onoff(v)
 		}
-		b.reply(ctx, m, fmt.Sprintf(
-			"ℹ️ Auto-transcription\n• Global: %s\n• This chat: %s\n• Effective: %s\n\n%s",
-			onoff(tr.Global), chat, onoff(tr.Effective(m.chatKeys()...)), transcriptionUsage))
+		b.reply(ctx, m, b.t(msgTranscriptionState,
+			b.onoff(tr.Global), chat, b.onoff(tr.Effective(m.chatKeys()...)),
+			b.t(msgTranscriptionUsage)))
 	case len(args) == 1 && (args[0] == "on" || args[0] == "off"):
 		on := args[0] == "on"
 		err := b.Config.Update(func(c *config.Config) {
@@ -457,20 +437,28 @@ func (b *Bot) cmdTranscription(ctx context.Context, m *Message, args []string) {
 				c.Transcription.Chats[k] = on
 			}
 		})
-		b.replySaved(ctx, m, err, fmt.Sprintf("✅ Auto-transcription %s in this chat.", onoff(on)))
+		saved := msgAutoOffChat
+		if on {
+			saved = msgAutoOnChat
+		}
+		b.replySaved(ctx, m, err, b.t(saved))
 	case len(args) == 2 && args[0] == "global" && (args[1] == "on" || args[1] == "off"):
 		on := args[1] == "on"
 		err := b.Config.Update(func(c *config.Config) { c.Transcription.Global = on })
-		b.replySaved(ctx, m, err, fmt.Sprintf("✅ Auto-transcription %s by default.", onoff(on)))
+		saved := msgAutoOffGlobal
+		if on {
+			saved = msgAutoOnGlobal
+		}
+		b.replySaved(ctx, m, err, b.t(saved))
 	default:
-		b.reply(ctx, m, "⚠️ Invalid arguments.\n\n"+transcriptionUsage)
+		b.reply(ctx, m, b.t(msgInvalidArgs, b.t(msgTranscriptionUsage)))
 	}
 }
 
 func (b *Bot) replySaved(ctx context.Context, m *Message, err error, ok string) {
 	if err != nil {
 		b.log().Error("saving config failed", "err", err)
-		b.reply(ctx, m, "⚠️ Could not save the setting.")
+		b.reply(ctx, m, b.t(msgSaveFailed))
 		return
 	}
 	b.reply(ctx, m, ok)
@@ -486,12 +474,11 @@ func (b *Bot) cmdReset(ctx context.Context, m *Message, args []string) {
 		}
 		b.pendingReset[key] = now.Add(ResetConfirmWindow)
 		b.mu.Unlock()
-		b.reply(ctx, m, "⚠️ This unlinks WhatsApp and erases all settings, the web password "+
-			"and the WiFi networks.\nSend \"!reset confirm\" within 60 seconds to proceed.")
+		b.reply(ctx, m, b.t(msgResetPrompt))
 		return
 	}
 	if len(args) != 1 || args[0] != "confirm" {
-		b.reply(ctx, m, "ℹ️ Usage: !reset, then !reset confirm")
+		b.reply(ctx, m, b.t(msgResetUsage))
 		return
 	}
 	b.mu.Lock()
@@ -499,11 +486,10 @@ func (b *Bot) cmdReset(ctx context.Context, m *Message, args []string) {
 	delete(b.pendingReset, key)
 	b.mu.Unlock()
 	if !ok || now.After(deadline) {
-		b.reply(ctx, m, "ℹ️ Nothing to confirm: send !reset first.")
+		b.reply(ctx, m, b.t(msgResetNothing))
 		return
 	}
-	b.reply(ctx, m, "♻️ Resetting. The device restarts in setup mode; this chat will "+
-		"no longer receive replies.")
+	b.reply(ctx, m, b.t(msgResetDone))
 	b.log().Warn("reset requested from WhatsApp")
 	if b.Reset == nil {
 		return
@@ -523,12 +509,12 @@ func (b *Bot) cmdPassword(ctx context.Context, m *Message, args []string) {
 	case 1:
 		pw = args[0]
 		if len([]rune(pw)) < MinPasswordLen {
-			b.reply(ctx, m, fmt.Sprintf("⚠️ The password needs at least %d characters.", MinPasswordLen))
+			b.reply(ctx, m, b.t(msgPasswordTooShort, MinPasswordLen))
 			b.deleteCommand(ctx, m)
 			return
 		}
 	default:
-		b.reply(ctx, m, "ℹ️ Usage: !password [new password, no spaces]")
+		b.reply(ctx, m, b.t(msgPasswordUsage))
 		b.deleteCommand(ctx, m)
 		return
 	}
@@ -538,16 +524,16 @@ func (b *Bot) cmdPassword(ctx context.Context, m *Message, args []string) {
 	}
 	if err != nil {
 		b.log().Error("setting the web password failed", "err", err)
-		b.reply(ctx, m, "⚠️ Could not save the password.")
+		b.reply(ctx, m, b.t(msgPasswordSaveFailed))
 		return
 	}
 	if generated {
-		b.reply(ctx, m, "🔑 New web UI password: "+pw)
+		b.reply(ctx, m, b.t(msgPasswordGenerated, pw))
 		return
 	}
 	// The command carries the password in clear: remove it from the history.
 	// Reply first, while the quoted message still exists.
-	b.reply(ctx, m, "🔑 Web UI password updated.")
+	b.reply(ctx, m, b.t(msgPasswordUpdated))
 	b.deleteCommand(ctx, m)
 }
 
