@@ -80,6 +80,13 @@
 {{else}}
 <section class="card">
   <p>The network is managed by the host (Docker or a regular computer), so there is nothing to set here.</p>
+  <form method="post" action="/network/public-url" class="stack">
+    <label>Address people use to reach this UI
+      <input name="public_url" value="{{.PublicURL}}" placeholder="https://wa.example.com" autocomplete="off">
+    </label>
+    <button>Save</button>
+  </form>
+  <p>Optional. Shown first by <code>!status</code>; must start with <code>http://</code> or <code>https://</code>.</p>
 </section>
 {{end}}
 {{end}}

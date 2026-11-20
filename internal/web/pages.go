@@ -49,11 +49,13 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /network/connect", s.auth(s.networkConnect))
 	m.HandleFunc("POST /network/forget", s.auth(s.networkForget))
 	m.HandleFunc("POST /network/policy", s.auth(s.networkPolicy))
+	m.HandleFunc("POST /network/public-url", s.auth(s.networkPublicURL))
 	m.HandleFunc("GET /logs", s.auth(s.logsPage))
 	m.HandleFunc("GET /logs.txt", s.auth(s.logsText))
 	m.HandleFunc("POST /logs/level", s.auth(s.logLevel))
 	m.HandleFunc("GET /system", s.auth(s.systemPage))
 	m.HandleFunc("POST /system/password", s.auth(s.changePassword))
+	m.HandleFunc("POST /system/language", s.auth(s.changeLanguage))
 	m.HandleFunc("POST /system/reset", s.auth(s.reset))
 }
 
@@ -526,10 +528,14 @@ type networkView struct {
 	Saved      []netmgr.SavedNetwork
 	Policy     string
 	Policies   []string
+	PublicURL  string
 }
 
 func (s *Server) networkPage(w http.ResponseWriter, r *http.Request) {
-	v := networkView{Managed: s.opts.NetworkManaged, Policies: []string{"auto", "always", "never"}, Policy: "auto"}
+	v := networkView{
+		Managed: s.opts.NetworkManaged, Policies: []string{"auto", "always", "never"}, Policy: "auto",
+		PublicURL: s.opts.Config.Get().PublicURL,
+	}
 	switch {
 	case s.opts.Network != nil:
 		v.Interfaces = s.opts.Network.Status().Interfaces
@@ -607,6 +613,36 @@ func (s *Server) networkForget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.back(w, r, "/network", true, "Forgot "+ssid+".")
+}
+
+// networkPublicURL saves the address people use to reach the UI when the
+// device cannot know it (Docker, a dev machine). !status lists it first.
+func (s *Server) networkPublicURL(w http.ResponseWriter, r *http.Request) {
+	if s.opts.NetworkManaged {
+		s.back(w, r, "/network", false, "The device finds its own address.")
+		return
+	}
+	raw := strings.TrimSpace(r.PostFormValue("public_url"))
+	if raw != "" && !validPublicURL(raw) {
+		s.back(w, r, "/network", false, "The address must start with http:// or https://.")
+		return
+	}
+	if err := s.opts.Config.Update(func(c *config.Config) { c.PublicURL = raw }); err != nil {
+		s.opts.Log.Error("saving the public URL failed", "err", err)
+		s.back(w, r, "/network", false, "Could not save the address.")
+		return
+	}
+	s.opts.Log.Info("public URL changed from the web UI", "set", raw != "")
+	s.back(w, r, "/network", true, "Address saved.")
+}
+
+// validPublicURL accepts an absolute http(s) URL with a host.
+func validPublicURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	return true
 }
 
 func (s *Server) networkPolicy(w http.ResponseWriter, r *http.Request) {
@@ -692,8 +728,34 @@ func lineRank(line string) int {
 
 // -- system -----------------------------------------------------------------
 
+type systemView struct {
+	MinPasswordLen int
+	Languages      []string
+	Language       string
+}
+
 func (s *Server) systemPage(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "system", "System", MinPasswordLen)
+	s.render(w, r, "system", "System", systemView{
+		MinPasswordLen: MinPasswordLen,
+		Languages:      config.Languages,
+		Language:       config.NormalizeLanguage(s.opts.Config.Get().Language),
+	})
+}
+
+// changeLanguage sets the language of the bot's WhatsApp replies.
+func (s *Server) changeLanguage(w http.ResponseWriter, r *http.Request) {
+	lang := r.PostFormValue("language")
+	if !slices.Contains(config.Languages, lang) {
+		s.back(w, r, "/system", false, "Unsupported language.")
+		return
+	}
+	if err := s.opts.Config.Update(func(c *config.Config) { c.Language = lang }); err != nil {
+		s.opts.Log.Error("saving the reply language failed", "err", err)
+		s.back(w, r, "/system", false, "Could not save the language.")
+		return
+	}
+	s.opts.Log.Info("bot reply language changed from the web UI", "language", lang)
+	s.back(w, r, "/system", true, "Language saved.")
 }
 
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {

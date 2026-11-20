@@ -396,3 +396,59 @@ func TestHealthzNeedsNoSession(t *testing.T) {
 	h.setup()
 	check("password set")
 }
+
+func TestReplyLanguageSetting(t *testing.T) {
+	h := newHarness(t)
+	h.setup()
+	if _, _, body := h.get(h.c, "/system"); !strings.Contains(body, `name="language"`) {
+		t.Fatal("no language select on the System page")
+	}
+	h.post(h.c, "/system/language", url.Values{"language": {"fr"}})
+	if got := h.cfg.Get().Language; got != "" {
+		t.Fatalf("unsupported language saved: %q", got)
+	}
+	_, _, body := h.post(h.c, "/system/language", url.Values{"language": {"it"}})
+	if got := h.cfg.Get().Language; got != "it" {
+		t.Fatalf("language = %q, want it", got)
+	}
+	if !strings.Contains(body, `value="it" selected`) {
+		t.Fatal("Italian not selected after saving")
+	}
+}
+
+func TestPublicURLSetting(t *testing.T) {
+	h := newHarness(t)
+	h.setup()
+	h.post(h.c, "/network/public-url", url.Values{"public_url": {"wa.example.com"}})
+	if got := h.cfg.Get().PublicURL; got != "" {
+		t.Fatalf("invalid address saved: %q", got)
+	}
+	h.post(h.c, "/network/public-url", url.Values{"public_url": {"https://wa.example.com"}})
+	if got := h.cfg.Get().PublicURL; got != "https://wa.example.com" {
+		t.Fatalf("public URL = %q", got)
+	}
+	if _, _, body := h.get(h.c, "/network"); !strings.Contains(body, `value="https://wa.example.com"`) {
+		t.Fatal("saved address not shown in the form")
+	}
+	h.post(h.c, "/network/public-url", url.Values{"public_url": {""}})
+	if got := h.cfg.Get().PublicURL; got != "" {
+		t.Fatalf("address not cleared: %q", got)
+	}
+}
+
+func TestPublicURLRefusedWhenNetworkIsManaged(t *testing.T) {
+	h := newHarness(t)
+	s := New(Options{
+		Config: h.cfg, Status: h.st, Logs: h.logs, WA: h.wa,
+		Getenv: func(string) string { return "" }, Version: "test",
+		NetworkManaged: true,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/network/public-url",
+		strings.NewReader("public_url=https%3A%2F%2Fwa.example.com"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	s.networkPublicURL(rec, req)
+	if got := h.cfg.Get().PublicURL; got != "" {
+		t.Fatalf("address saved with network management on: %q", got)
+	}
+}
