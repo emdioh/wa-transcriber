@@ -71,3 +71,16 @@ func TestCaptiveRedirectTarget(t *testing.T) {
 		t.Fatalf("Location = %q", loc)
 	}
 }
+
+func TestHealthzBypassesCaptivePortal(t *testing.T) {
+	s, setAP := captiveHandler(t)
+	setAP(true)
+	// Docker probes 127.0.0.1, a foreign Host while the setup AP runs.
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Host = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok\n" {
+		t.Fatalf("healthz in AP mode: %d %q", rec.Code, rec.Body.String())
+	}
+}

@@ -32,6 +32,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /login", s.loginPage)
 	m.HandleFunc("POST /login", s.loginSubmit)
 	m.HandleFunc("POST /logout", s.logout)
+	m.HandleFunc("GET /healthz", s.healthz)
 
 	m.HandleFunc("GET /{$}", s.auth(s.statusPage))
 	m.HandleFunc("GET /api/status", s.auth(s.apiStatus))
@@ -189,6 +190,14 @@ type apiStatus struct {
 	Account     string `json:"account,omitempty"`
 	Pairing     string `json:"pairing"` // changes whenever the QR/code on screen changes
 	LastMessage string `json:"last_message,omitempty"`
+}
+
+// healthz is the container health probe: no session, no redirect, and it
+// keeps working while the setup AP (captive portal) is running.
+func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprintln(w, "ok")
 }
 
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {

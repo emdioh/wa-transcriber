@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+	// Zone data in the binary: the scratch Docker image has no /usr/share/zoneinfo.
+	_ "time/tzdata"
 
 	"go.mau.fi/whatsmeow/types"
 
@@ -57,10 +59,15 @@ func run() error {
 	claimMode := flag.Bool("coord-claims", os.Getenv("WAT_COORD_CLAIMS") == "1",
 		"multi-transcriber claims: on only once the M2 experiment proves them invisible (env WAT_COORD_CLAIMS=1)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	healthcheckOnly := flag.Bool("healthcheck", false,
+		"probe the local web UI on -listen and exit 0 when healthy, 1 otherwise (for Docker HEALTHCHECK)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
 		return nil
+	}
+	if *healthcheckOnly {
+		return healthcheck(*listen, nil)
 	}
 
 	memTotal := logbuf.MemTotal()

@@ -28,6 +28,12 @@ var captivePaths = map[string]bool{
 // itself. It is a no-op unless the AP is running.
 func (s *Server) captivePortal(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The health probe uses 127.0.0.1, a foreign Host for the captive
+		// portal: it must reach the handler, not a redirect.
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if s.opts.InAPMode == nil || !s.opts.InAPMode() {
 			next.ServeHTTP(w, r)
 			return

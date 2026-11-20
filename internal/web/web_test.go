@@ -376,3 +376,23 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+func TestHealthzNeedsNoSession(t *testing.T) {
+	h := newHarness(t)
+	check := func(phase string) {
+		t.Helper()
+		resp, err := h.c.Get(h.srv.URL + "/healthz")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || string(body) != "ok\n" {
+			t.Fatalf("%s: %d %q", phase, resp.StatusCode, body)
+		}
+	}
+	// The probe must never redirect to /setup, before or after the password.
+	check("setup mode")
+	h.setup()
+	check("password set")
+}
