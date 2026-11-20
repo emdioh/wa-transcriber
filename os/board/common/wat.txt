@@ -20,7 +20,8 @@ hostname=wa
 # console: debug login shell on the device, off by default. "serial" is the
 #          UART header (/dev/ttyS0 on the BeagleBone, /dev/ttyAMA0 on the
 #          Raspberry Pi 2), "usb" the mini-USB client port (BeagleBone only),
-#          "both" both of them. There is no root password: anyone who can
-#          reach the port gets a root shell, so leave it off except while
-#          debugging. See docs/hardware.md.
+#          "hdmi" the HDMI output (needs a USB keyboard), "both" serial+usb,
+#          "all" everything. There is no root password: anyone who can reach
+#          the port gets a root shell, so leave it off except while debugging.
+#          See os/README.md.
 console=off

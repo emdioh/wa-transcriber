@@ -113,7 +113,7 @@ grep -q 'mount .*\-t vfat .* /boot' "$OVL/etc/init.d/S00boot" ||
 	fail "S00boot does not mount the boot partition at /boot"
 grep -q 'mkdir -p "\$TARGET_DIR/boot"' "$HERE/board/common/post-build.sh" ||
 	fail "post-build.sh does not create the /boot mountpoint"
-for tty in ttyS0 ttyAMA0 ttyGS0; do
+for tty in ttyS0 ttyAMA0 ttyGS0 tty1; do
 	grep -q "$tty" "$OVL/etc/init.d/S02console" ||
 		fail "S02console does not handle $tty"
 done
@@ -134,11 +134,21 @@ ok "wat.txt template"
 # --- boot console ----------------------------------------------------------
 
 # Linux 6.1 names the BeagleBone UART ttyS0; console=ttyO0 matches nothing.
+# Kernel output also goes to HDMI (tty1) and starts with earlycon, so a board
+# without a serial adapter still shows what happened.
 grep -q 'console=ttyS0,115200' "$HERE/board/bbb/extlinux.conf" ||
 	fail "bbb/extlinux.conf must use console=ttyS0,115200"
 if grep -q 'console=ttyO0' "$HERE/board/bbb/extlinux.conf"; then
 	fail "bbb/extlinux.conf still uses ttyO0 (renamed in Linux 4.11)"
 fi
+grep -q 'console=tty1' "$HERE/board/bbb/extlinux.conf" ||
+	fail "bbb/extlinux.conf must also log to tty1 (HDMI)"
+grep -q 'earlycon=' "$HERE/board/bbb/extlinux.conf" ||
+	fail "bbb/extlinux.conf has no earlycon: nothing prints before the UART driver loads"
+grep -q 'quiet' "$HERE/board/bbb/extlinux.conf" &&
+	fail "bbb/extlinux.conf still passes quiet: the boot log is how we debug"
+grep -q 'console=tty1' "$HERE/board/rpi2/cmdline.txt" ||
+	fail "rpi2/cmdline.txt must keep console=tty1 (HDMI)"
 ok "boot console"
 
 # --- helper scripts --------------------------------------------------------

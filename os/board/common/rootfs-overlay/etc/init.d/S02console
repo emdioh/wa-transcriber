@@ -5,14 +5,22 @@
 #	console=off      nothing (default)
 #	console=serial   login shell on the board's UART header
 #	console=usb      login shell over the USB client port (CDC-ACM gadget)
-#	console=both     both of the above
+#	console=hdmi     login shell on tty1, the HDMI/analog output (a USB
+#	                 keyboard on the host port drives it)
+#	console=both     serial + usb
+#	console=all      serial + usb + hdmi
 #
 # The root password is empty, so this is a root shell without a password:
 # enable it only on a card you keep, and only while debugging.
 #
 # Called from rcS, after S00boot has mounted /boot.
 
-log() { echo "S02console: $*"; }
+# Messages go to the kernel log, which the kernel prints on every active
+# console: the serial header, HDMI and the USB gadget. That way the reason a
+# console did not start is visible even when no console started.
+log() {
+	echo "S02console: $*" >/dev/kmsg 2>/dev/null || echo "S02console: $*"
+}
 
 # Last value of key=value in wat.txt, with Windows line endings and inline
 # comments tolerated (the boot partition is FAT and gets edited on other
@@ -97,9 +105,9 @@ usb_acm() {
 mode=$(wat_value console) || mode=
 case "$mode" in
 off | "" ) exit 0 ;;
-serial | usb | both) ;;
+serial | usb | hdmi | both | all) ;;
 *)
-	log "unknown console=$mode in wat.txt, want off, serial, usb or both"
+	log "unknown console=$mode in wat.txt, want off, serial, usb, hdmi, both or all"
 	exit 0
 	;;
 esac
@@ -107,7 +115,7 @@ esac
 log "debug console: $mode (root shell, no password)"
 
 case "$mode" in
-serial | both)
+serial | both | all)
 	dev=$(serial_dev)
 	if [ -c "/dev/$dev" ]; then
 		spawn "$dev"
@@ -118,7 +126,17 @@ serial | both)
 esac
 
 case "$mode" in
-usb | both)
+usb | both | all)
 	usb_acm || log "USB console not available"
+	;;
+esac
+
+case "$mode" in
+hdmi | all)
+	if [ -c /dev/tty1 ]; then
+		spawn tty1
+	else
+		log "no /dev/tty1 for the HDMI console"
+	fi
 	;;
 esac

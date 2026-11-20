@@ -41,16 +41,26 @@ nothing else listens there. A shell is opt-in through `wat.txt`:
 | `off` (default) | nothing |
 | `serial` | the UART header: `/dev/ttyS0` on the BeagleBone (J1, 115200 8N1, 3.3 V USB-TTL adapter), `/dev/ttyAMA0` on the Raspberry Pi 2 |
 | `usb` | the USB client port as a CDC-ACM gadget, `/dev/ttyGS0`; on a Linux host it appears as `/dev/ttyACM0` |
-| `both` | both of the above |
+| `hdmi` | `tty1`, i.e. the HDMI output driven by a USB keyboard on the host port |
+| `both` | `serial` + `usb` |
+| `all` | `serial` + `usb` + `hdmi` |
 
-`S02console` starts a busybox `getty` in a respawn loop. **The root account
-has no password**, so anyone who can reach the port gets a root shell: turn
-it on for a card you keep, and off again afterwards. The USB path needs the
-port in peripheral mode (`ls /sys/class/udc`); the BeagleBone has
-`CONFIG_USB_CONFIGFS_ACM=y` built in, the Raspberry Pi 2 has no device
-controller and logs `no USB device controller`. Kernel messages are on the
-UART regardless (`console=ttyS0,115200` in `extlinux.conf`); `dmesg` after
-logging in shows the rest (the cmdline keeps `quiet`).
+`S02console` starts a busybox `getty` in a respawn loop and logs every
+decision to `/dev/kmsg`, so the kernel prints it on every active console.
+**The root account has no password**, so anyone who can reach the port gets a
+root shell: turn it on for a card you keep, and off again afterwards. The USB
+path needs the port in peripheral mode (`ls /sys/class/udc`); the BeagleBone
+has `CONFIG_USB_CONFIGFS_ACM=y` built in, the Raspberry Pi 2 has no device
+controller and logs `no USB device controller`.
+
+Kernel messages never need `console=`: the BeagleBone boots with
+`earlycon=uart8250,mmio32,0x44e09000,115200n8 console=ttyS0,115200
+console=tty1` and no `quiet`, so the boot log appears on the serial header
+**and** on an HDMI monitor from the first line. That is the cheapest way to
+see whether the card booted at all: a BeagleBone that shows nothing on HDMI
+after power-up is not running this image (a blank screen with a bare blinking
+cursor is usually the on-board eMMC system: hold **S2** while powering to force
+the microSD).
 
 ## Building
 
