@@ -8,9 +8,9 @@ BeagleBone Black) and Docker.
 - [docs/STATUS.md](docs/STATUS.md): what is done and verified, known limitations
 - [docs/PLAN.md](docs/PLAN.md): remaining milestones, step by step, with exit criteria
 
-Status: milestones 1, 3, 4, 5 (code), 6 (build side), 7 (CI, releases and
-multi-arch image; container runtime checks still pending) and 8 (code) — see
-[STATUS.md](docs/STATUS.md).
+Status: milestones 1, 3, 4, 5 (code), 6 (build side), 7 (CI, releases,
+multi-arch image and the full amd64 container flow; an arm host is still
+untested) and 8 (code) — see [STATUS.md](docs/STATUS.md).
 
 ## Build
 

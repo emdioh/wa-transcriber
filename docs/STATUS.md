@@ -14,7 +14,7 @@ Last update: 2026-11-20.
 | M5 | Network manager, code (ethernet, WiFi, setup AP, mDNS, clock) | ✅ done (unit tests with scripted fakes) |
 | M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
 | M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 images build (Pi 2 38.6 MB gz, BBB 47.8 MB gz); runtime criteria need the boards |
-| M7 | CI, Docker image, releases | 🔄 CI green, v0.1.0/v0.1.1 released, 24.5 MB image; container verified with Podman (setup, pairing, OpenRouter transcription, restart, health); `!reset` re-exec and an arm host still open |
+| M7 | CI, Docker image, releases | 🔄 CI green, v0.1.0/v0.1.1 released, 24.5 MB image; container fully verified on amd64 with Podman (setup, pairing, transcription, restart, `!reset` re-exec); an arm host is still untested |
 | M8 | Small items (reply language, public URL in UI, startup log) | ✅ code and tests done; manual Italian check on a phone pending |
 
 ## Verified on real devices (by the owner)
@@ -30,7 +30,6 @@ Last update: 2026-11-20.
   2026-11-20, inside the container).
 - Pairing by phone number (code) from the web UI.
 - `!password` deleting the command message for everyone.
-- `!reset` end to end (logout + erase + re-exec).
 - Self-chat detection for single-member groups.
 - The Docker image: CI built and pushed it for amd64, arm64 and armv7
   (`ghcr.io/emdioh/wa-transcriber`, tags `v0.1.1`, `0.1.1`, `latest`).
@@ -44,9 +43,10 @@ Last update: 2026-11-20.
   `healthy`, the setup password, reply language, public URL and
   transcription settings all save, a real pairing survives a container
   restart (authenticated without a new QR), a voice note was transcribed
-  through OpenRouter, and a deliberately root-owned volume exits with the
-  `chown` hint instead of starting. Still unverified in a container: the
-  `!reset` re-exec and any arm host. The local build context used to include
+  through OpenRouter, `!reset` from WhatsApp re-executed the binary inside
+  the same container and returned it to setup mode, and a deliberately
+  root-owned volume exits with the `chown` hint instead of starting. Still
+  unverified: running the image on an arm64 or armv7 host. The local build context used to include
   `os/_output` (20 GB), which CI never saw; `.dockerignore` now excludes the
   Buildroot trees.
 - The multi-arch image is private, like the repository. Pulling it needs a

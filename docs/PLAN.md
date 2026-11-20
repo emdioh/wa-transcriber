@@ -88,7 +88,8 @@ serving a UI whose saves fail. Podman re-checked the whole flow (fresh
 volume owner 65532, healthy, setup, real pairing, an OpenRouter
 transcription, pairing survives a restart, root-owned volume fails fast) and
 exposed a 20 GB Docker build context from `os/_output`, now excluded in
-`.dockerignore`. Remaining: the `!reset` re-exec and an arm host.
+`.dockerignore`. The `!reset` re-exec is verified too (same container, restarts=0, back in
+setup mode). Remaining: an arm host.
 
 ### Steps
 
