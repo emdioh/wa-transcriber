@@ -76,9 +76,10 @@ runs), the Dockerfile runs as uid 65532 on `:8080` with a `HEALTHCHECK`, and
 CI runs gofmt, vet, `go test -race ./...` and `make dist` on every push. Tag
 `v0.1.0` published the three binaries with `SHA256SUMS` and the multi-arch
 image (`ghcr.io/emdioh/wa-transcriber`, tags `v0.1.0`/`0.1.0`/`latest`, now
-private because the repository is private). Still open: the manual Docker
-tests and the image size check (the release workflow now prints compressed
-sizes); branch protection on `main` needs the owner.
+private because the repository is private). Image sizes are now
+logged per platform (`v0.1.1`: 9.1 MB amd64, 8.4 MB arm64, 8.7 MB armv7
+compressed), so the < 30 MB criterion holds. Still open: the manual Docker
+runtime tests; branch protection on `main` needs the owner.
 
 ### Steps
 

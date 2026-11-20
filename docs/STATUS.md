@@ -14,7 +14,7 @@ Last update: 2026-11-20.
 | M5 | Network manager, code (ethernet, WiFi, setup AP, mDNS, clock) | ✅ done (unit tests with scripted fakes) |
 | M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
 | M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 images build (Pi 2 38.6 MB gz, BBB 47.8 MB gz); runtime criteria need the boards |
-| M7 | CI, Docker image, releases | 🔄 CI green and v0.1.0 released; the image is published but has never been run |
+| M7 | CI, Docker image, releases | 🔄 CI green, v0.1.0/v0.1.1 released, images 8.4–9.1 MB compressed; no container has been run yet |
 | M8 | Small items (reply language, public URL in UI, startup log) | ✅ code and tests done; manual Italian check on a phone pending |
 
 ## Verified on real devices (by the owner)
@@ -32,20 +32,21 @@ Last update: 2026-11-20.
 - `!reset` end to end (logout + erase + re-exec).
 - Self-chat detection for single-member groups.
 - The Docker image: CI built and pushed it for amd64, arm64 and armv7
-  (`ghcr.io/emdioh/wa-transcriber`, tags `v0.1.0`, `0.1.0`, `latest`), but no
-  container has ever been *run*: there is no Docker daemon in the
-  development sandbox. Runtime checks (first-visit setup, pairing, one
-  transcription, `!reset` re-exec, restart keeps pairing, `docker inspect`
-  healthy, `docker image ls` < 30 MB) still need the owner.
+  (`ghcr.io/emdioh/wa-transcriber`, tags `v0.1.1`, `0.1.1`, `latest`).
+  Compressed layer sizes from the release log: 9.1 MB amd64, 8.4 MB arm64,
+  8.7 MB armv7 (the `docker image ls` size is about the 24 MB binary plus
+  CA certificates, still under 30 MB). No container has ever been *run*:
+  there is no Docker daemon in the development sandbox. Runtime checks
+  (first-visit setup, pairing, one transcription, `!reset` re-exec, restart
+  keeps pairing, `docker inspect` healthy) still need the owner.
 - The multi-arch image is private, like the repository. Pulling it needs a
   `ghcr.io` token with `read:packages`.
 - The images themselves: both build and their partitions were inspected offline
   (contents, init scripts, binary present), but neither has ever been booted.
   The runtime criteria in M6 and every scenario in M5b need the boards.
-- The release workflow: it ran for `v0.1.0` and produced the release with
-  three binaries and `SHA256SUMS`, plus the multi-arch image. The size
-  logging step was added after that tag, so it is first exercised on the
-  next release.
+- The release workflow: it ran for `v0.1.0` and `v0.1.1`, producing the
+  releases with three binaries and `SHA256SUMS` plus the multi-arch image;
+  since `v0.1.1` it also logs the compressed size per platform.
 - Italian bot replies: every reply has an Italian translation and unit tests
   exercise `!help`, `!status`, `!transcription`, `!t` and the error replies,
   but nobody has read them in a real chat yet.
