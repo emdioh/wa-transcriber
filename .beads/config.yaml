@@ -73,3 +73,5 @@
 
 sync:
     remote: "git+https://github.com/emdioh/wa-transcriber.git"
+export:
+    auto: true
