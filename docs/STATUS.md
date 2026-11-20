@@ -14,7 +14,7 @@ Last update: 2026-11-20.
 | M5 | Network manager, code (ethernet, WiFi, setup AP, mDNS, clock) | ✅ done (unit tests with scripted fakes) |
 | M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
 | M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 images build (Pi 2 38.6 MB gz, BBB 47.8 MB gz); runtime criteria need the boards |
-| M7 | CI, Docker image, releases | 🔄 CI green, v0.1.0/v0.1.1 released, images 8.4–9.1 MB compressed; no container has been run yet |
+| M7 | CI, Docker image, releases | 🔄 CI green, v0.1.0/v0.1.1 released, images 8.4–9.1 MB compressed; container runs healthy and pairs, full runtime flow still open |
 | M8 | Small items (reply language, public URL in UI, startup log) | ✅ code and tests done; manual Italian check on a phone pending |
 
 ## Verified on real devices (by the owner)
@@ -35,10 +35,11 @@ Last update: 2026-11-20.
   (`ghcr.io/emdioh/wa-transcriber`, tags `v0.1.1`, `0.1.1`, `latest`).
   Compressed layer sizes from the release log: 9.1 MB amd64, 8.4 MB arm64,
   8.7 MB armv7 (the `docker image ls` size is about the 24 MB binary plus
-  CA certificates, still under 30 MB). No container has ever been *run*:
-  there is no Docker daemon in the development sandbox. Runtime checks
-  (first-visit setup, pairing, one transcription, `!reset` re-exec, restart
-  keeps pairing, `docker inspect` healthy) still need the owner.
+  CA certificates, still under 30 MB). On amd64 the container starts as uid
+  65532, `docker inspect` reports `healthy`, the setup page opens and the
+  pairing QR is shown (owner check, 2026-11-20). Still unverified in a
+  container: one end-to-end transcription, the `!reset` re-exec, a restart
+  keeping the volume pairing, and any arm host.
 - The multi-arch image is private, like the repository. Pulling it needs a
   `ghcr.io` token with `read:packages`.
 - The images themselves: both build and their partitions were inspected offline
