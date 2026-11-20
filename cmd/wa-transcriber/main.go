@@ -85,6 +85,9 @@ func run() error {
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
 		return err
 	}
+	if err := checkWritable(*dataDir); err != nil {
+		return dataDirError(*dataDir, err)
+	}
 	cfg, err := config.Open(filepath.Join(*dataDir, "config.json"))
 	if err != nil {
 		return err

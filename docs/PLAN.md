@@ -81,7 +81,10 @@ logged per platform (`v0.1.1`: 9.1 MB amd64, 8.4 MB arm64, 8.7 MB armv7
 compressed; `docker image ls` 24.5 MB), so the < 30 MB criterion holds. The container now runs
 healthy on amd64 and shows the pairing QR (owner check); still open: an
 end-to-end transcription, the `!reset` re-exec, restart keeping the pairing,
-an arm host, and branch protection on `main`.
+an arm host, and branch protection on `main`. One real-world catch found on
+the owner's host: a volume created by the old root image cannot be written by
+uid 65532, so startup now fails with the exact `chown` command instead of
+serving a UI whose saves fail.
 
 ### Steps
 

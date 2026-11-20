@@ -43,6 +43,11 @@ Last update: 2026-11-20.
   keeping the volume pairing, and any arm host.
 - The multi-arch image is private, like the repository. Pulling it needs a
   `ghcr.io` token with `read:packages`.
+- Docker volumes first created by the pre-hardening image (root, `:80`) stay
+  root-owned, and Docker never re-owns an existing volume. The binary now
+  refuses to start in that case with `data directory /data is not writable`
+  and the `chown` command to fix it, instead of starting a UI whose first
+  save fails. A fresh volume gets uid 65532 from the image.
 - The images themselves: both build and their partitions were inspected offline
   (contents, init scripts, binary present), but neither has ever been booted.
   The runtime criteria in M6 and every scenario in M5b need the boards.

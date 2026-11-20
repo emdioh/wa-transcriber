@@ -53,8 +53,14 @@ docker run -d --restart unless-stopped -p 8080:8080 \
 
 The container runs as uid 65532 and listens on `:8080` (a non-root process
 cannot bind `:80`). A fresh named volume gets the right ownership; for a bind
-mount run `sudo chown -R 65532:65532 <dir>` first, otherwise the container
-cannot create its session. `docker inspect` shows the health status: the
+mount run `sudo chown -R 65532:65532 <dir>` first. A volume first created by
+an older image that ran as root stays root-owned, and Docker never fixes it:
+the container then refuses to start with `data directory /data is not
+writable`. Recreate the volume (loses the pairing) or fix it once:
+
+```bash
+docker run --rm -v wa-data:/data busybox chown -R 65532:65532 /data
+``` `docker inspect` shows the health status: the
 image probes `GET /healthz` with `-healthcheck`, which works without a
 session and also while the setup access point runs.
 
