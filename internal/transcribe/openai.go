@@ -153,9 +153,10 @@ func stripFences(s string) string {
 // doJSON sends req and decodes a 200 JSON answer into out. Errors carry a
 // short excerpt of the body with the API key masked.
 func doJSON(c *http.Client, req *http.Request, apiKey string, out any) error {
+	endpoint := req.URL.Host + req.URL.Path
 	resp, err := c.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", req.Method, req.URL.Path, redact(err.Error(), apiKey))
+		return fmt.Errorf("%s %s: %w", req.Method, endpoint, redact(err.Error(), apiKey))
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -163,10 +164,10 @@ func doJSON(c *http.Client, req *http.Request, apiKey string, out any) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: HTTP %d: %s", req.URL.Path, resp.StatusCode, excerpt(string(data), apiKey))
+		return fmt.Errorf("%s: HTTP %d: %s", endpoint, resp.StatusCode, excerpt(string(data), apiKey))
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("%s: invalid JSON: %s", req.URL.Path, excerpt(string(data), apiKey))
+		return fmt.Errorf("%s: invalid JSON: %s", endpoint, excerpt(string(data), apiKey))
 	}
 	return nil
 }

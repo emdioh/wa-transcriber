@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -124,6 +125,8 @@ func (s *Service) Transcribe(ctx context.Context, v bot.Voice) (string, error) {
 	}
 	defer func() { <-s.running }()
 
+	s.log().Info("transcribing voice note", "chat", v.Chat, "msg", v.Quote.ID,
+		"provider", st.Provider, "model", st.Model, "endpoint", endpointText(st.BaseURL))
 	audio, err := s.Download.DownloadAudio(ctx, v.Audio)
 	if err != nil {
 		return "", fmt.Errorf("download: %w", err)
@@ -140,6 +143,15 @@ func (s *Service) Transcribe(ctx context.Context, v bot.Voice) (string, error) {
 	s.log().Info("voice note transcribed", "chat", v.Chat, "msg", v.Quote.ID,
 		"bytes", len(audio), "chars", len(r.Text), "lang", r.Language, "translated", r.Translation != "")
 	return Format(r), nil
+}
+
+// endpointText is the base URL without credentials or query, safe to log.
+func endpointText(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	return u.Scheme + "://" + u.Host + u.Path
 }
 
 func (s *Service) client() *http.Client {
