@@ -21,13 +21,36 @@ Services, all started from `board/common/rootfs-overlay`:
 
 | Script | Role |
 |---|---|
+| `S00boot` | mounts partition 1 read-only at `/boot`, so the binary and `S02console` can read `wat.txt` |
 | `S01data` | creates and formats partition 3 on first boot, mounts `/data` (idempotent: a power cut mid-way cannot brick the card) |
+| `S02console` | optional debug login shell, off unless `wat.txt` says `console=serial`, `usb` or `both` |
 | `S40ntpd` | busybox `ntpd` against two servers; the binary waits for a sane clock anyway |
 | `S90watchdog` | loads `bcm2835_wdt` / `omap_wdt` |
 | `inittab` | `::respawn:` the transcriber with `-data /data -network managed -listen :80 -watchdog /dev/watchdog` |
 
 The watchdog is fed by the binary itself (5 s interval). `kill -STOP` the
 process and the board reboots within ~20 s: that is the recovery path.
+
+## Debug console
+
+The images ship no login shell: the kernel console is the board's UART and
+nothing else listens there. A shell is opt-in through `wat.txt`:
+
+| `console=` | Shell on |
+|---|---|
+| `off` (default) | nothing |
+| `serial` | the UART header: `/dev/ttyS0` on the BeagleBone (J1, 115200 8N1, 3.3 V USB-TTL adapter), `/dev/ttyAMA0` on the Raspberry Pi 2 |
+| `usb` | the USB client port as a CDC-ACM gadget, `/dev/ttyGS0`; on a Linux host it appears as `/dev/ttyACM0` |
+| `both` | both of the above |
+
+`S02console` starts a busybox `getty` in a respawn loop. **The root account
+has no password**, so anyone who can reach the port gets a root shell: turn
+it on for a card you keep, and off again afterwards. The USB path needs the
+port in peripheral mode (`ls /sys/class/udc`); the BeagleBone has
+`CONFIG_USB_CONFIGFS_ACM=y` built in, the Raspberry Pi 2 has no device
+controller and logs `no USB device controller`. Kernel messages are on the
+UART regardless (`console=ttyS0,115200` in `extlinux.conf`); `dmesg` after
+logging in shows the rest (the cmdline keeps `quiet`).
 
 ## Building
 
@@ -50,7 +73,7 @@ Measured with Buildroot 2024.02.9 on 12 cores:
 | Board | `sdcard.img` | gzipped | boot partition |
 |---|---|---|---|
 | Raspberry Pi 2 | 192 MB | 38.6 MB | bootcode.bin, start.elf, fixup.dat, zImage, bcm2709-rpi-2-b.dtb, cmdline.txt, config.txt, wat.txt |
-| BeagleBone Black | 192 MB | 47.8 MB | MLO, u-boot.img, zImage, am335x-boneblack.dtb, extlinux/, wat.txt |
+| BeagleBone Black | 192 MB | 50.2 MB | MLO, u-boot.img, zImage, am335x-boneblack.dtb, extlinux/, wat.txt |
 
 The image is 192 MB regardless of the card size: it is one 32 MB boot
 partition plus a 160 MB root partition; the start of the card stays free for
@@ -78,8 +101,10 @@ sudo dd if=os/_output/rpi2/images/sdcard.img of=/dev/sdX bs=4M conv=fsync status
 On Windows use Raspberry Pi Imager ("Use custom image") or balenaEtcher.
 
 Before ejecting, open the small FAT partition and edit **`wat.txt`**: set
-`setup_ap_key` to your own WPA2 passphrase (≥ 8 characters) and `country` to
-your country code. This file is only read at boot.
+`setup_ap_key` to your own WPA2 passphrase (≥ 8 characters), `country` to
+your country code and, if you want a login shell on the board, `console=`
+(see [Debug console](#debug-console)). The partition is mounted read-only at
+`/boot` at boot, and the file is only read then.
 
 First boot:
 

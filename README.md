@@ -97,7 +97,11 @@ sudo dd if=os/_output/rpi2/images/sdcard.img of=/dev/sdX bs=4M conv=fsync status
 ```
 
 Before ejecting, edit `wat.txt` on the small FAT partition (`setup_ap_key`,
-`country`). First boot: the board publishes `WA-Setup-XXXX`, a phone joins
+`country`, and `console=` if you want a login shell on the board — off by
+default, it gives a root shell with no password; see
+[os/README.md](os/README.md#debug-console)). The partition is mounted
+read-only at `/boot` and the file is read at boot. First boot: the board
+publishes `WA-Setup-XXXX`, a phone joins
 it and the captive portal opens the web UI; then link WhatsApp and add your
 home WiFi. The root filesystem is read-only and `/data` is created on first
 boot, so power cuts are safe. Reflashing erases `/data`: back up

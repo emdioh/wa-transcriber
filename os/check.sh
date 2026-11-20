@@ -94,7 +94,8 @@ done
 # --- rootfs overlay --------------------------------------------------------
 
 OVL="$HERE/board/common/rootfs-overlay"
-for f in etc/inittab etc/fstab etc/init.d/S01data etc/init.d/S40ntpd etc/init.d/S90watchdog; do
+for f in etc/inittab etc/fstab etc/init.d/S00boot etc/init.d/S01data \
+	etc/init.d/S02console etc/init.d/S40ntpd etc/init.d/S90watchdog; do
 	[ -f "$OVL/$f" ] || fail "missing overlay file $f"
 done
 for s in "$OVL"/etc/init.d/S*; do
@@ -106,6 +107,16 @@ grep -q 'sysinit:/etc/init.d/rcS' "$OVL/etc/inittab" ||
 	fail "inittab does not run rcS"
 grep -q '^LABEL=DATA' "$OVL/etc/fstab" || fail "fstab does not mount the DATA partition"
 grep -q 'sysfs' "$OVL/etc/fstab" || fail "fstab does not mount /sys (needed by mdev and the network manager)"
+# The boot partition carries wat.txt: without the mount the binary silently
+# falls back to its defaults.
+grep -q 'mount .*\-t vfat .* /boot' "$OVL/etc/init.d/S00boot" ||
+	fail "S00boot does not mount the boot partition at /boot"
+grep -q 'mkdir -p "\$TARGET_DIR/boot"' "$HERE/board/common/post-build.sh" ||
+	fail "post-build.sh does not create the /boot mountpoint"
+for tty in ttyS0 ttyAMA0 ttyGS0; do
+	grep -q "$tty" "$OVL/etc/init.d/S02console" ||
+		fail "S02console does not handle $tty"
+done
 ok "rootfs overlay"
 
 # --- wat.txt template ------------------------------------------------------
@@ -116,7 +127,19 @@ grep -q '^setup_ap_key=' "$WAT" || fail "wat.txt has no setup_ap_key"
 grep -q '^country=' "$WAT" || fail "wat.txt has no country"
 key=$(sed -n 's/^setup_ap_key=//p' "$WAT")
 [ ${#key} -ge 8 ] || fail "the setup_ap_key template is shorter than 8 characters"
+grep -q '^console=off$' "$WAT" ||
+	fail "wat.txt must ship with the debug console off (console=off)"
 ok "wat.txt template"
+
+# --- boot console ----------------------------------------------------------
+
+# Linux 6.1 names the BeagleBone UART ttyS0; console=ttyO0 matches nothing.
+grep -q 'console=ttyS0,115200' "$HERE/board/bbb/extlinux.conf" ||
+	fail "bbb/extlinux.conf must use console=ttyS0,115200"
+if grep -q 'console=ttyO0' "$HERE/board/bbb/extlinux.conf"; then
+	fail "bbb/extlinux.conf still uses ttyO0 (renamed in Linux 4.11)"
+fi
+ok "boot console"
 
 # --- helper scripts --------------------------------------------------------
 

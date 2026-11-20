@@ -1,0 +1,45 @@
+#!/bin/sh
+#
+# Mount the FAT boot partition read-only at /boot.
+#
+# wat.txt lives there: the binary reads the setup AP key and country from it
+# (internal/netmgr/ap.go) and S02console reads the console= line. Without this
+# mount every setting in that file is silently ignored.
+#
+# Called from rcS before anything that reads it. The root filesystem is
+# read-only, so /boot must exist in the image (post-build.sh creates it).
+
+log() { echo "S00boot: $*"; }
+
+# Root device, e.g. /dev/mmcblk0p2 or /dev/sda2 (same logic as S01data).
+rootdev=$(awk '$2 == "/" { print $1; exit }' /proc/mounts)
+case "$rootdev" in
+/dev/mmcblk*p[0-9]*) disk=${rootdev%p[0-9]*} ;;
+/dev/*[0-9]) disk=${rootdev%[0-9]*} ;;
+*)
+	log "cannot tell the SD card from root device '$rootdev', /boot stays unmounted"
+	exit 0
+	;;
+esac
+
+bootdev="${disk}1"
+if [ "${disk#/dev/mmcblk}" != "${disk}" ]; then
+	bootdev="${disk}p1"
+fi
+
+i=0
+while [ ! -b "$bootdev" ] && [ "$i" -lt 50 ]; do
+	sleep 0.2
+	i=$((i + 1))
+done
+if [ ! -b "$bootdev" ]; then
+	log "no $bootdev, /boot stays unmounted"
+	exit 0
+fi
+
+if mountpoint -q /boot; then
+	exit 0
+fi
+if ! mount -t vfat -o ro,nosuid,nodev,noexec "$bootdev" /boot; then
+	log "mounting $bootdev at /boot failed"
+fi

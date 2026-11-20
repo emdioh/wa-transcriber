@@ -34,6 +34,12 @@ phone connect. Fail → use an RT5370 or MT7612U dongle and repeat.
 sudo ./wa-transcriber -data /data -network managed -listen :80
 ```
 
+On the images (`console=serial` in `wat.txt`, see
+[../os/README.md](../os/README.md#debug-console)) the same process runs from
+inittab and a login shell is available on the UART header: keep
+`tcpdump -ni any udp port 5353`, `dmesg` and the web UI Logs page open while
+testing, they are the only way to see what the network manager decided.
+
 Check `!status` and `http://wa.local/` after each scenario. Repeat every
 scenario 3 times (PLAN.md, M5 exit criteria):
 

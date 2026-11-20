@@ -14,6 +14,10 @@ TARGET_DIR="$1"
 # the process can start and show the problem in the web UI.
 mkdir -p "$TARGET_DIR/data"
 
+# Mountpoint for the boot partition: the root filesystem is read-only, so
+# S00boot cannot create it, and wat.txt is read through it.
+mkdir -p "$TARGET_DIR/boot"
+
 # Read-only root: no network manager from the distro and, above all, no
 # distro dnsmasq: the setup AP starts its own (port 53/67 would clash).
 rm -f "$TARGET_DIR/etc/init.d/S40network" "$TARGET_DIR/etc/init.d/S80dnsmasq" 2>/dev/null || true
