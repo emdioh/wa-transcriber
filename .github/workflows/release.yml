@@ -71,6 +71,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Manifest and sizes
+      - name: Manifest and compressed sizes
         run: |
-          docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME}"
+          set -euo pipefail
+          ref="ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME}"
+          docker buildx imagetools inspect "$ref" --raw > index.json
+          jq -r '.manifests[]
+                 | select(.platform.architecture != "unknown")
+                 | "\(.platform.os)/\(.platform.architecture)/\(.platform.variant // "") \(.digest)"' index.json |
+          while read -r platform digest; do
+            bytes=$(docker buildx imagetools inspect "$ref@$digest" --raw | jq '[.layers[].size] | add')
+            awk -v p="$platform" -v b="$bytes" 'BEGIN { printf "%s %.1f MB compressed\n", p, b/1000000 }'
+          done

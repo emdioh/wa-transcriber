@@ -14,7 +14,7 @@ Last update: 2026-11-20.
 | M5 | Network manager, code (ethernet, WiFi, setup AP, mDNS, clock) | ✅ done (unit tests with scripted fakes) |
 | M5b | Network validation on real hardware (dongle gate + 8 scenarios) | ⏳ not started (needs Pi / Cubieboard + WiFi dongle) |
 | M6 | Buildroot images (Pi 2, BeagleBone Black) | 🔄 images build (Pi 2 38.6 MB gz, BBB 47.8 MB gz); runtime criteria need the boards |
-| M7 | CI, Docker image, releases | 🔄 code, workflows and docs done; CI run and a real image build still needed |
+| M7 | CI, Docker image, releases | 🔄 CI green and v0.1.0 released; the image is published but has never been run |
 | M8 | Small items (reply language, public URL in UI, health check) | ⏳ not started |
 
 ## Verified on real devices (by the owner)
@@ -31,15 +31,21 @@ Last update: 2026-11-20.
 - `!password` deleting the command message for everyone.
 - `!reset` end to end (logout + erase + re-exec).
 - Self-chat detection for single-member groups.
-- The Docker image: the scratch image now runs as uid 65532, listens on
-  `:8080` and has a `/healthz` + `-healthcheck` probe (the probe is tested
-  locally), but it has never been built or run: no Docker daemon in the
-  development sandbox. The first real build is the release workflow.
+- The Docker image: CI built and pushed it for amd64, arm64 and armv7
+  (`ghcr.io/emdioh/wa-transcriber`, tags `v0.1.0`, `0.1.0`, `latest`), but no
+  container has ever been *run*: there is no Docker daemon in the
+  development sandbox. Runtime checks (first-visit setup, pairing, one
+  transcription, `!reset` re-exec, restart keeps pairing, `docker inspect`
+  healthy, `docker image ls` < 30 MB) still need the owner.
+- The multi-arch image is private, like the repository. Pulling it needs a
+  `ghcr.io` token with `read:packages`.
 - The images themselves: both build and their partitions were inspected offline
   (contents, init scripts, binary present), but neither has ever been booted.
   The runtime criteria in M6 and every scenario in M5b need the boards.
-- Both GitHub workflows: they are written but have not run yet (CI on the
-  first push, release on the first `v*` tag).
+- The release workflow: it ran for `v0.1.0` and produced the release with
+  three binaries and `SHA256SUMS`, plus the multi-arch image. The size
+  logging step was added after that tag, so it is first exercised on the
+  next release.
 - Everything in `internal/netmgr` beyond unit tests: the managed mode has never
   run on real hardware (no accessible network stack in the sandbox). The
   commands it issues are tested with scripted fakes only. Milestone **M5b**

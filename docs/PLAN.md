@@ -70,11 +70,15 @@ multi-arch container image.
 
 **Gate in**: none.
 
-**Status (2026-11-20): code and workflows written, not yet run.** `-healthcheck`
-and `GET /healthz` exist and are tested (the probe also works while the setup
-AP runs), the Dockerfile runs as uid 65532 on `:8080` with a `HEALTHCHECK`,
-and `.github/workflows/{ci,release}.yml` are in place. Still open: the first
-CI run, the first release tag, the image build and the manual Docker tests.
+**Status (2026-11-20): CI green, v0.1.0 released.** `-healthcheck` and
+`GET /healthz` exist and are tested (the probe also works while the setup AP
+runs), the Dockerfile runs as uid 65532 on `:8080` with a `HEALTHCHECK`, and
+CI runs gofmt, vet, `go test -race ./...` and `make dist` on every push. Tag
+`v0.1.0` published the three binaries with `SHA256SUMS` and the multi-arch
+image (`ghcr.io/emdioh/wa-transcriber`, tags `v0.1.0`/`0.1.0`/`latest`, now
+private because the repository is private). Still open: the manual Docker
+tests and the image size check (the release workflow now prints compressed
+sizes); branch protection on `main` needs the owner.
 
 ### Steps
 
