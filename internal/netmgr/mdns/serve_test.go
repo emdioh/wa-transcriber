@@ -187,3 +187,86 @@ func TestAnnounceReportsWriteError(t *testing.T) {
 		t.Fatalf("%d writes after the failure, want 1", got)
 	}
 }
+
+// A conflict must be a *different* address. Our own announcements come back on
+// the socket (multicast loopback) and mDNS reflectors echo them around the LAN;
+// treating those as a conflict made the device rename itself to wa-2.local on
+// its own address, and then nothing resolved wa.local any more (seen on the
+// board: "name conflict, renamed ... ip=192.168.15.43", the board's own IP).
+func TestOwnAnnouncementIsNotAConflict(t *testing.T) {
+	r := &Responder{Name: "wa"}
+	own := Iface{Index: 2, IP: net.IPv4(192, 168, 15, 43), Name: "eth0"}
+	pkt, err := r.Announce(own.IP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip, ok := r.OtherAddress(pkt)
+	if !ok {
+		t.Fatal("OtherAddress did not see the A record")
+	}
+	if !ip.Equal(own.IP) {
+		t.Fatalf("OtherAddress = %v, want %v", ip, own.IP)
+	}
+	if !isOwnAddress(ip, []Iface{own}) {
+		t.Fatal("our own address was not recognised: the device would rename itself")
+	}
+	other := net.IPv4(192, 168, 15, 99)
+	if isOwnAddress(other, []Iface{own}) {
+		t.Fatal("another device's address was taken for ours: a real conflict would be ignored")
+	}
+	if r.Label() != "wa" {
+		t.Fatalf("label changed to %q", r.Label())
+	}
+}
+
+func TestLocalIPFor(t *testing.T) {
+	eth0 := Iface{Index: 2, IP: net.IPv4(192, 168, 15, 43), Name: "eth0"}
+	wlan0 := Iface{Index: 3, IP: net.IPv4(192, 168, 15, 44), Name: "wlan0"}
+	ifaces := []Iface{eth0, wlan0}
+	src := &net.UDPAddr{IP: net.IPv4(192, 168, 15, 13), Port: 40000}
+
+	cases := []struct {
+		name   string
+		ifaces []Iface
+		cm     *ipv4.ControlMessage
+		want   string
+	}{
+		{"destination address wins", ifaces, &ipv4.ControlMessage{IfIndex: 2, Dst: wlan0.IP}, "192.168.15.44"},
+		{"interface index", ifaces, &ipv4.ControlMessage{IfIndex: 3}, "192.168.15.44"},
+		{"one interface, no control message", []Iface{eth0}, nil, "192.168.15.43"},
+		{"same /24 fallback", ifaces, nil, "192.168.15.43"},
+		// Two interfaces, neither in the querier's subnet and no control
+		// message: there is no defensible answer, so stay quiet.
+		{"nothing to answer with", []Iface{
+			{Index: 4, IP: net.IPv4(10, 0, 0, 2), Name: "usb0"},
+			{Index: 5, IP: net.IPv4(172, 16, 0, 2), Name: "eth1"},
+		}, nil, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := localIPFor(c.ifaces, c.cm, src)
+			if c.want == "" {
+				if got != nil {
+					t.Fatalf("got %v, want nil", got)
+				}
+				return
+			}
+			if got == nil || got.String() != c.want {
+				t.Fatalf("got %v, want %s", got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsMulticast(t *testing.T) {
+	gaddr := &net.UDPAddr{IP: net.IPv4(224, 0, 0, 251), Port: 5353}
+	if !isMulticast(&ipv4.ControlMessage{Dst: gaddr.IP}, gaddr) {
+		t.Fatal("group destination not recognised as multicast")
+	}
+	if isMulticast(&ipv4.ControlMessage{Dst: net.IPv4(192, 168, 15, 43)}, gaddr) {
+		t.Fatal("unicast destination taken for multicast")
+	}
+	if isMulticast(nil, gaddr) {
+		t.Fatal("missing control message must not count as multicast")
+	}
+}

@@ -243,8 +243,11 @@ Behaviour:
   with a 5 min retry; an idle AP with saved networks goes back to client mode
   after 5 min when one of them is visible. `always`/`never` override.
 - **mDNS**: answers `A` for `wa.local` on every interface with that
-  interface's IPv4 (TTL 120, cache-flush), unicast when the query asks for
-  it; a conflicting responder makes it rename to `wa-2.local`, `wa-3.local`.
+  interface's IPv4 (TTL 120, cache-flush), to multicast queries and to the
+  unicast queries of RFC 6762 section 6.7; a conflicting responder with a
+  *different* address makes it rename to `wa-2.local`, `wa-3.local`. Its own
+  announcements come back (multicast loopback) and mDNS reflectors on the LAN
+  echo them, so a record carrying one of our own addresses is not a conflict.
 - **Clock**: before connecting, wait until `now > buildTime` (embedded with
   `-X main.buildTime`) and, in managed mode, `adjtimex` reports `STA_UNSYNC`
   cleared; give up after 2 minutes with a warning; `!status` and the Status

@@ -516,8 +516,11 @@ it changes interfaces and binds port 53/67/5353).
      switch to `wa-2.local` (then `-3`…) and log it.
    - Tests: feed packets built with `dnsmessage` into the handler; assert
      the response bytes. Manual: `avahi-resolve -n wa.local` (Linux),
-     `dns-sd -G v4 wa.local` (macOS), `ping wa.local` (Windows 10+), Android
-     and iOS browsers.
+     `dns-sd -G v4 wa.local` (macOS), `ping wa.local` (Windows 10+), iOS
+     browsers and Android 12+ with a Google Play System Update from
+     November 2021 or later (which added one-shot mDNS queries to the DNS
+     resolver); older Android only has `NsdManager` service discovery, so a
+     `.local` name does not resolve there at all.
 10. **Clock**: before `wa.Client.Run` connects, wait until the clock is sane:
     `time.Now()` later than the build time (embed it with
     `-ldflags -X main.buildTime=…`) **and**, in managed mode, `adjtimex`

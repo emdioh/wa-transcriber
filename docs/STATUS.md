@@ -197,3 +197,39 @@ docs/                        ARCHITECTURE.md, STATUS.md, PLAN.md, hardware.md
 Build and test: `make test`, `make build`, `make dist`, `make -C os check`. Run locally:
 `./wa-transcriber -data ./data -listen :8080`. Network management is off
 unless `-network managed` (needs root).
+
+## mDNS: fix for `wa.local` not resolving (2026-11-21, awaiting on-board check)
+
+The owner could not reach `wa.local` from an Android phone. Android does
+support `.local`: the DNS resolver gained one-shot mDNS queries (RFC 6762
+section 5.1) with the Google Play System Update of November 2021 (Google issue
+140786115, "Fixed"), so Android 12+ resolves `.local` and Android 13 has it
+natively; older versions only offer `NsdManager` service discovery, where a
+`.local` name in a browser never resolves. Here the device was the problem:
+
+- **Renamed itself on its own address.** `OtherAddress` matched any `A` record
+  for the configured name, so an announcement carrying *our* address counted
+  as a conflict. Our own announcements return on the same socket
+  (`SetMulticastLoopback(true)`), and the owner's LAN also has an mDNS
+  reflector at 192.168.1.254 that answers `wa.local` LAN-wide. The board log
+  shows the result: `mdns: name conflict, renamed old=wa.local new=wa-2.local
+  ip=192.168.15.43` — the IP is the board's own. After the rename nothing
+  answers `wa.local`, which is exactly the reported symptom. Confirmed with a
+  unit test before fixing: `OtherAddress` on our own announcement packet
+  returns our own address.
+- **Unicast queries were never received.** The socket came from
+  `net.ListenMulticastUDP` bound to the group address, so only packets
+  addressed to 224.0.0.251 arrived; a query sent straight to the device
+  (RFC 6762 section 6.7, which some resolvers use) was dropped. Measured from
+  the dev box: direct query to 192.168.15.43:5353 got no answer, while a
+  multicast query was answered only by the reflector, not by the board.
+- **Join group failed with EADDRINUSE.** `ListenMulticastUDP` already joins
+  the group, and the explicit per-interface `JoinGroup` then failed; the
+  code logged it and never joined that interface, so a Wi-Fi interface
+  appearing later was never joined either.
+
+Fixes: one socket bound to the wildcard address joining the group per
+interface (like avahi), joining interfaces that appear later, answering
+unicast queries too, and only renaming when the conflicting record names a
+different address. Unit tests: `TestOwnAnnouncementIsNotAConflict`,
+`TestLocalIPFor`, `TestIsMulticast`. Not yet confirmed on the board.
