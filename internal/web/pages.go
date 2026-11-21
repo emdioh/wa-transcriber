@@ -26,7 +26,7 @@ import (
 
 func (s *Server) routes() {
 	m := s.mux
-	m.Handle("GET /static/", http.FileServerFS(staticFS))
+	m.Handle("GET /static/", staticHandler())
 	m.HandleFunc("GET /setup", s.setupPage)
 	m.HandleFunc("POST /setup", s.setupSubmit)
 	m.HandleFunc("GET /login", s.loginPage)
@@ -52,6 +52,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /network/public-url", s.auth(s.networkPublicURL))
 	m.HandleFunc("GET /logs", s.auth(s.logsPage))
 	m.HandleFunc("GET /logs.txt", s.auth(s.logsText))
+	m.HandleFunc("GET /logs/live", s.auth(s.logsLive))
 	m.HandleFunc("POST /logs/level", s.auth(s.logLevel))
 	m.HandleFunc("GET /system", s.auth(s.systemPage))
 	m.HandleFunc("POST /system/password", s.auth(s.changePassword))
@@ -666,24 +667,50 @@ type logsView struct {
 	Total    int
 	LogLevel string
 	Levels   []string
+	Updated  string // HH:MM:SS of the render, shown next to the line count
 }
 
 var logLevels = []string{"debug", "info", "warn", "error"}
 
 func (s *Server) logsPage(w http.ResponseWriter, r *http.Request) {
+	filter := logFilter(r)
+	all := s.opts.Logs.Lines()
+	v := logsView{
+		Lines: filteredLines(all, filter), Filter: filter, Total: len(all),
+		LogLevel: s.logLevelName(), Levels: logLevels, Updated: time.Now().Format("15:04:05"),
+	}
+	s.render(w, r, "logs", "Logs", v)
+}
+
+// logsLive is what the Logs page polls: the same lines logsPage shows, as
+// plain text, so the page can refresh without reloading.
+func (s *Server) logsLive(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	for _, l := range filteredLines(s.opts.Logs.Lines(), logFilter(r)) {
+		_, _ = w.Write([]byte(l + "\n"))
+	}
+}
+
+// logFilter reads ?level=, defaulting to everything (debug).
+func logFilter(r *http.Request) string {
 	filter := strings.ToLower(r.URL.Query().Get("level"))
 	if !slices.Contains(logLevels, filter) {
-		filter = "debug"
+		return "debug"
 	}
-	all := s.opts.Logs.Lines()
-	v := logsView{Filter: filter, Total: len(all), LogLevel: s.logLevelName(), Levels: logLevels}
+	return filter
+}
+
+// filteredLines keeps the lines at or above the rank of filter.
+func filteredLines(all []string, filter string) []string {
+	var out []string
 	min := levelRank(filter)
 	for _, l := range all {
 		if lineRank(l) >= min {
-			v.Lines = append(v.Lines, l)
+			out = append(out, l)
 		}
 	}
-	s.render(w, r, "logs", "Logs", v)
+	return out
 }
 
 func (s *Server) logsText(w http.ResponseWriter, r *http.Request) {

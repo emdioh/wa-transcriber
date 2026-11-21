@@ -223,17 +223,32 @@ func TestTranscriptionForm(t *testing.T) {
 		"provider": {"gemini"}, "api_key": {""}, "keep_languages": {"Italian, en, it"},
 		"translate_to": {"IT"}, "global": {"on"}, "timeout_seconds": {"90"},
 	}
-	_, _, body := h.post(h.c, "/transcription", form)
+	// The saved key is shown in plain text, so the owner can see what is stored.
+	_, _, body := h.get(h.c, "/transcription")
+	if !strings.Contains(body, `type="text" name="api_key"`) || !strings.Contains(body, `value="sk-old"`) {
+		t.Fatal("the saved key is not prefilled in the form")
+	}
+	if !strings.Contains(body, "Delete the saved key") {
+		t.Fatal("no way to delete the saved key")
+	}
+	// An empty field still keeps a key saved out of band (old browsers, scripts).
+	_ = h.cfg.Update(func(c *config.Config) { c.Transcription.APIKey = "sk-newer" })
+	_, _, body = h.post(h.c, "/transcription", form)
 	if !strings.Contains(body, "Settings saved") {
 		t.Fatalf("save failed: %s", body)
 	}
 	tr := h.cfg.Get().Transcription
-	if tr.Provider != "gemini" || tr.APIKey != "sk-old" || strings.Join(tr.KeepLanguages, ",") != "it,en" ||
+	if tr.Provider != "gemini" || tr.APIKey != "sk-newer" || strings.Join(tr.KeepLanguages, ",") != "it,en" ||
 		tr.TranslateTo != "it" || !tr.Global || tr.TimeoutSeconds != 90 {
 		t.Fatalf("saved = %+v", tr)
 	}
-	if strings.Contains(body, "sk-old") {
-		t.Fatal("the API key must never be sent back to the browser")
+
+	// The prefilled value comes back and re-saves the same key.
+	_, _, body = h.post(h.c, "/transcription", url.Values{
+		"provider": {"gemini"}, "api_key": {"sk-newer"}, "keep_languages": {"it"},
+	})
+	if !strings.Contains(body, "Settings saved") || h.cfg.Get().Transcription.APIKey != "sk-newer" {
+		t.Fatal("re-saving the prefilled key failed")
 	}
 
 	form.Set("keep_languages", "klingon")
@@ -247,15 +262,26 @@ func TestTranscriptionForm(t *testing.T) {
 	if h.cfg.Get().Transcription.APIKey != "" {
 		t.Fatal("key not cleared")
 	}
+	if _, _, body := h.get(h.c, "/transcription"); strings.Contains(body, `value="sk-newer"`) {
+		t.Fatal("the cleared key is still prefilled")
+	}
 }
 
 func TestEnvOverriddenFieldsAreReadOnly(t *testing.T) {
 	h := newHarness(t)
 	h.setup()
+	_ = h.cfg.Update(func(c *config.Config) { c.Transcription.APIKey = "sk-saved" })
 	h.env["WAT_API_KEY"] = "sk-env"
 	_, _, body := h.get(h.c, "/transcription")
 	if !strings.Contains(body, "set by WAT_API_KEY") || strings.Contains(body, "sk-env") {
 		t.Fatal("env override not shown read-only, or key leaked")
+	}
+	// A key from the environment must never be printed, not even a saved one.
+	if strings.Contains(body, "sk-saved") || strings.Contains(body, `value="sk-`) {
+		t.Fatal("a key value leaked into the page while WAT_API_KEY is set")
+	}
+	if strings.Contains(body, `type="text" name="api_key"`) {
+		t.Fatal("the env-provided key must stay hidden")
 	}
 }
 
@@ -345,11 +371,90 @@ func TestLogsFilterAndDownload(t *testing.T) {
 	if strings.Contains(body, "msg=hello") || !strings.Contains(body, "msg=boom") {
 		t.Fatal("filter not applied")
 	}
+	if !strings.Contains(body, `data-level="error"`) || !strings.Contains(body, `id="logstamp"`) {
+		t.Fatal("the live view has no level or no stamp to update")
+	}
 	resp, _ := h.c.Get(h.srv.URL + "/logs.txt")
 	data, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if !strings.Contains(string(data), "msg=hello") || !strings.Contains(resp.Header.Get("Content-Disposition"), "attachment") {
 		t.Fatal("download incomplete")
+	}
+}
+
+func TestLogsLive(t *testing.T) {
+	h := newHarness(t)
+	h.logs.Write([]byte("time=1 level=INFO msg=hello\ntime=2 level=WARN msg=careful\ntime=3 level=ERROR msg=boom\n"))
+
+	// Auth: the live view never leaks logs to an anonymous client.
+	if code, _, _ := h.get(h.newClient(), "/logs/live"); code != http.StatusOK {
+		// it redirects to /login, which the helper follows; the body must not
+		// carry logs either way
+		t.Fatalf("anonymous /logs/live: %d", code)
+	}
+	if _, _, body := h.get(h.newClient(), "/logs/live"); strings.Contains(body, "msg=boom") {
+		t.Fatal("logs served without a session")
+	}
+
+	h.setup()
+	resp, err := h.c.Get(h.srv.URL + "/logs/live?level=warn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Fatalf("content type %q", ct)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("cache-control %q", cc)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		t.Fatalf("the live view must not be a download: %q", cd)
+	}
+	got := string(data)
+	if strings.Contains(got, "msg=hello") || !strings.Contains(got, "msg=careful") || !strings.Contains(got, "msg=boom") {
+		t.Fatalf("warn filter: %q", got)
+	}
+	if strings.Count(got, "\n") != 2 || !strings.HasSuffix(got, "\n") {
+		t.Fatalf("want one line per log line: %q", got)
+	}
+
+	// Default and unknown levels behave like the page: everything.
+	for _, p := range []string{"/logs/live", "/logs/live?level=bogus"} {
+		_, _, body := h.get(h.c, p)
+		if !strings.Contains(body, "msg=hello") {
+			t.Fatalf("%s did not default to debug: %q", p, body)
+		}
+	}
+	// The same filter as the page it feeds.
+	_, _, page := h.get(h.c, "/logs?level=warn")
+	_, _, live := h.get(h.c, "/logs/live?level=warn")
+	if !strings.Contains(page, "msg=boom") || strings.Contains(page, "msg=hello") || live != got {
+		t.Fatal("page and live view disagree")
+	}
+}
+
+func TestStaticAssetsAreRevalidated(t *testing.T) {
+	h := newHarness(t)
+	for _, p := range []string{"/static/app.js", "/static/style.css"} {
+		resp, err := h.c.Get(h.srv.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "no-cache") {
+			t.Fatalf("%s cache-control %q", p, cc)
+		}
+		if resp.Header.Get("ETag") == "" || resp.Header.Get("Last-Modified") == "" {
+			t.Fatalf("%s has no validator", p)
+		}
+	}
+	// The layout asks for a versioned script, so an upgrade also busts caches.
+	h.setup()
+	_, _, body := h.get(h.c, "/logs")
+	if !strings.Contains(body, `/static/app.js?v=test`) {
+		t.Fatal("app.js is not referenced with the version")
 	}
 }
 

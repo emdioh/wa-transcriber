@@ -10,8 +10,8 @@
     <label class="check"><input type="checkbox" id="autorefresh"> Refresh every 5 s</label>
     <a class="button secondary" href="/logs.txt">Download</a>
   </div>
-  <p class="hint">{{len .Lines}} of {{.Total}} lines. Logs are kept in memory only and are lost on restart.</p>
-  <pre id="log">{{range .Lines}}{{.}}
+  <p class="hint"><span id="logcount">{{len .Lines}}</span> of {{.Total}} lines. <span id="logstamp">updated {{.Updated}}</span>. Logs are kept in memory only and are lost on restart.</p>
+  <pre id="log" data-level="{{.Filter}}">{{range .Lines}}{{.}}
 {{end}}</pre>
 </section>
 <section class="card">

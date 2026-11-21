@@ -11,6 +11,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
@@ -239,6 +240,29 @@ func (s *Server) validSession(r *http.Request, hash string) bool {
 	}
 	return true
 }
+
+// staticHandler serves the embedded CSS and JS. Embedded files have a zero
+// modification time, so http.FileServerFS sends no validator and a browser
+// may keep a stale app.js for a long time: every response must be
+// revalidated, and gets a Last-Modified and an ETag derived from the content
+// (a stable hash that changes with every new binary).
+func staticHandler() http.Handler {
+	files := http.FileServerFS(staticFS)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Cache-Control", "no-cache, must-revalidate")
+		name := strings.TrimPrefix(r.URL.Path, "/static/")
+		if data, err := staticFS.ReadFile("static/" + name); err == nil {
+			sum := sha256.Sum256(data)
+			h.Set("ETag", `"`+hex.EncodeToString(sum[:8])+`"`)
+			h.Set("Last-Modified", staticEpoch.Format(http.TimeFormat))
+		}
+		files.ServeHTTP(w, r)
+	})
+}
+
+// staticEpoch is the build-independent modification date of embedded files.
+var staticEpoch = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func (s *Server) startSession(w http.ResponseWriter, hash string) {
 	var b [32]byte

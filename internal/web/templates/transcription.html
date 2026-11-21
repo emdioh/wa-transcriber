@@ -10,8 +10,11 @@
   {{if index $env "provider"}}<input type="hidden" name="provider" value="{{.Eff.Provider}}"><p class="hint">Set by {{index $env "provider"}}.</p>{{end}}
 
   <label>API key
-    <input type="password" name="api_key" autocomplete="off" {{if index $env "api_key"}}disabled placeholder="set by {{index $env "api_key"}}"{{else if .HasKey}}placeholder="saved: leave empty to keep it"{{else}}placeholder="paste the key"{{end}}>
+    {{if index $env "api_key"}}<input type="password" name="api_key" autocomplete="off" disabled placeholder="set by {{index $env "api_key"}}">
+    {{else}}<input type="text" name="api_key" autocomplete="off" spellcheck="false" value="{{.Cfg.APIKey}}" {{if .HasKey}}placeholder="saved: leave empty to keep it"{{else}}placeholder="paste the key"{{end}}>
+    {{end}}
   </label>
+  <p class="hint">The key is saved in plain text in <code>/data/config.json</code>; this page is only as private as the UI password.</p>
   {{if and .HasKey (not (index $env "api_key"))}}<label class="check"><input type="checkbox" name="clear_key"> Delete the saved key</label>{{end}}
 
   <details {{if or .Cfg.Model .Cfg.BaseURL .Cfg.TranslationModel .Cfg.TimeoutSeconds}}open{{end}}>
