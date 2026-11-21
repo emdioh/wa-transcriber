@@ -225,8 +225,17 @@ func run() error {
 	}
 
 	go func() {
+		managed := *networkMode == "managed"
+		// The first connect needs a resolver: an attempt that runs before
+		// DHCP wrote /etc/resolv.conf fails on "[::1]:53" and only looks
+		// like a fault in the pairing code.
+		netmgr.WaitNetwork(ctx, netmgr.NetWait{
+			Managed:  managed,
+			InAPMode: nm.InAPMode,
+			Log:      log,
+		})
 		if !netmgr.WaitClock(ctx, netmgr.ClockCheck{
-			Managed:   *networkMode == "managed",
+			Managed:   managed,
 			Now:       time.Now,
 			BuildTime: parseBuildTime(buildTime),
 			Synced:    netmgr.NTPSynced,
