@@ -61,6 +61,7 @@ type Client struct {
 	pairPhone    string // pair with a code for this number instead of the QR
 	pairCodeSent bool   // a code is on screen for the current attempt
 	pairReady    bool   // connected and waiting to be paired
+	qr           qrChanCache
 }
 
 type groupEntry struct {
@@ -147,16 +148,33 @@ var errPairTimeout = errors.New("pairing codes expired")
 // ErrNotReady: the pairing connection is not up yet (or already paired).
 var ErrNotReady = errors.New("WhatsApp is not waiting for pairing right now, try again in a few seconds")
 
+// pairOnce runs one connect attempt on the pairing QR channel, creating the
+// channel only once for the whole pairing session.
+//
+// whatsmeow registers an event handler per GetQRChannel call and removes it
+// only when that channel closes. A connect attempt that fails after
+// GetQRChannel (no network yet, DNS down, WhatsApp unreachable) therefore
+// leaves its handler behind with an already cancelled context. That handler
+// still receives the next attempt's QR code event and then takes the
+// context-done branch of its emitter, which calls client.Disconnect(): the
+// socket dies milliseconds after the QR is shown, the phone scans a code that
+// is already dead and reports "cannot pair", and because the disconnect is
+// expected it emits no event and no reconnect. Reusing one channel for every
+// attempt keeps exactly one live handler.
 func (c *Client) pairOnce(ctx context.Context) error {
-	qrCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	ch, err := c.cli.GetQRChannel(qrCtx)
+	ch, err := c.qrChannel(ctx)
 	if err != nil {
 		return err
 	}
 	if err := c.cli.ConnectContext(ctx); err != nil {
+		// Keep the channel for the next attempt: it has not seen an event
+		// yet, and asking for a second one would leave this attempt's
+		// handler behind (see the comment above) to kill the socket.
 		return err
 	}
+	// From here on the channel has been used, so the next attempt needs a
+	// fresh one (whatsmeow removes its handler when it closes it).
+	defer c.dropQRChannel()
 	c.pairMu.Lock()
 	c.pairCodeSent = false
 	phone := c.pairPhone
@@ -209,6 +227,54 @@ func (c *Client) pairOnce(ctx context.Context) error {
 	return errors.New("pairing channel closed")
 }
 
+// qrChanCache keeps the pairing QR channel across connect attempts.
+type qrChanCache struct {
+	mu     sync.Mutex
+	ch     <-chan whatsmeow.QRChannelItem
+	cancel context.CancelFunc
+}
+
+// get returns the cached channel, or creates one with mk. The maker is called
+// at most once while a channel is open.
+func (q *qrChanCache) get(ctx context.Context, mk func(context.Context) (<-chan whatsmeow.QRChannelItem, error)) (<-chan whatsmeow.QRChannelItem, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.ch != nil {
+		return q.ch, nil
+	}
+	qrCtx, cancel := context.WithCancel(ctx)
+	ch, err := mk(qrCtx)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	q.ch, q.cancel = ch, cancel
+	return ch, nil
+}
+
+// drop forgets a channel that whatsmeow has closed and releases its context.
+func (q *qrChanCache) drop() {
+	q.mu.Lock()
+	cancel := q.cancel
+	q.ch, q.cancel = nil, nil
+	q.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// qrChannel returns the pairing QR channel, creating it on first use and
+// reusing it across connect attempts. See pairOnce for why the channel must
+// not be recreated after a failed attempt.
+func (c *Client) qrChannel(ctx context.Context) (<-chan whatsmeow.QRChannelItem, error) {
+	return c.qr.get(ctx, c.cli.GetQRChannel)
+}
+
+// dropQRChannel forgets the QR channel after it has been used up.
+func (c *Client) dropQRChannel() {
+	c.qr.drop()
+}
+
 func (c *Client) requestCode(ctx context.Context, phone string) error {
 	code, err := c.cli.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
@@ -253,6 +319,7 @@ func (c *Client) setPairing(code string) {
 
 // Close disconnects and closes the database.
 func (c *Client) Close() {
+	c.dropQRChannel()
 	c.cli.Disconnect()
 	if err := c.container.Close(); err != nil {
 		c.log.Warn("closing session db", "err", err)

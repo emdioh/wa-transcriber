@@ -8,3 +8,6 @@
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# pi harness state
+/.pi/
