@@ -49,6 +49,7 @@ v1, several WhatsApp accounts per device, Internet exposure of the UI.
 | D13 | **Buildroot** images with read-only root and a `/data` partition | Raspberry Pi OS, Alpine diskless | Smallest image, fastest boot, power-cut safe, one config per board with shared userspace. (Planned, milestone 6.) |
 | D14 | **Multi-transcriber coordination through invisible protocol fields** (empty reaction as claim, tag in the reply) | Visible bot messages, profile "About" text, push name | End-to-end encryption means the server cannot strip extra fields; official clients ignore them. Must be verified first (milestone 2). |
 | D15 | **Plain HTTP** for the UI | Self-signed TLS | The device has no domain for a real certificate; self-signed TLS trains users to click through warnings. Acceptable on a home LAN / WPA2 setup AP; the UI must not be exposed to the Internet. |
+| D16 | **A carrier loss never touches the interface address**, and neither does a DHCP rebind: the rootfs overlay ships its own idempotent udhcpc script, and flushing is an explicit `Ethernet.Flush` teardown | Flush on carrier down (M5 as first designed); keep the stock script and pass `udhcpc -R` | Flushing the address on a carrier blip kills the WhatsApp websocket, in-flight uploads and mDNS sockets — and the boards flap right after boot (wat-f2z.9). The destructiveness is in the *script*, not in a client flag: busybox `udhcpc` runs it with `deconfig` before every attempt, and Buildroot's version does `ifconfig $interface 0.0.0.0` there and `ifconfig $interface $ip …` on `bound` — both drop the address. `-R` is worse, not better: it means "release IP on exit", so it runs `deconfig` again on the way out. Our script no-ops on `deconfig` and uses `ip addr replace` (a netlink no-op for an identical address) on `bound`/`renew`; the overlay is rsynced after packages, so it replaces the stock file. |
 
 ## 3. Process layout
 
@@ -226,7 +227,22 @@ Behaviour:
   Up means `ip link set <if> up` then `udhcpc -n` for 15 s; no lease → an
   IPv4 link-local address that passed 2 ARP probes (`arping -D`), retried
   from a MAC hash on collision; DHCP is retried every 60 s and the
-  link-local address is dropped on success. Carrier down → `ip addr flush`.
+  link-local address is dropped on success. Carrier **down** keeps the
+  address and only stops DHCP (wat-f2z.9): flushing it killed every
+  established TCP socket on a carrier blip, and the boot log has one right
+  after boot. The link is not taken down either (`LinkDownOnCarrierLoss` is
+  off by default) so routing keeps working. The next carrier-up runs the same
+  DHCP command, but the image ships its own `udhcpc` script through the
+  rootfs overlay (`os/board/common/rootfs-overlay/usr/share/udhcpc/
+  default.script`, verified to win over the package's copy): it does nothing
+  on `deconfig` and uses `ip addr replace` on `bound`, so an unchanged lease
+  is a netlink no-op and only a changed one replaces the address. The stock
+  script does `ifconfig $interface 0.0.0.0` on `deconfig` and `ifconfig
+  $interface $ip` on `bound` — a `deladdr` + `addaddr` that drops established
+  connections even for the same address. It does not tag resolv.conf entries
+  per interface any more, which is fine while one uplink is active at a time.
+  `Ethernet.Flush` is the explicit teardown (leaving managed mode, handing the
+  interface to another owner).
 - **WiFi**: config in `/run/wat/wpa.conf`, SSIDs written as hex so no
   quoting bug is possible; `wpa_supplicant` is supervised and restarted when
   it dies; connect = poll `wpa_cli status` for `COMPLETED` (45 s) then DHCP.

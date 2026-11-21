@@ -436,14 +436,19 @@ it changes interfaces and binds port 53/67/5353).
    tree under `t.TempDir()`.
 3. **Ethernet** (`ether.go`):
    - carrier up → `ip link set <if> up` → `udhcpc -i <if> -f -q -t 5 -T 3
-     -s /usr/share/udhcpc/default.script` (Buildroot/busybox provides the
-     script; on Raspberry Pi OS install `udhcpc`);
+     -s /usr/share/udhcpc/default.script` (the image ships its own
+     idempotent script through the rootfs overlay; on Raspberry Pi OS
+     install `udhcpc`);
    - no lease within 15 s → link-local: address `169.254.(h>>8 % 254 +1).(h % 254 + 1)`
      from a hash of the MAC; check with `arping -D -c 2 -I <if> <ip>`; on
      conflict hash again (max 10 tries); `ip addr add <ip>/16 dev <if>`;
      keep retrying DHCP every 60 s and drop the link-local address when a
      lease arrives;
-   - carrier down → flush addresses (`ip addr flush dev <if>`).
+   - carrier down → keep the address and stop DHCP; on the next carrier up
+     DHCP runs again with the same command (no `-R`: that would release the
+     address on exit) and our script keeps it unless the lease changed.
+     Flushing is an explicit teardown only (`Ethernet.Flush`), decision
+     D16, wat-f2z.9: a flush on a carrier blip kills live TCP connections.
    Tests: fake `Runner` scripted outputs; assert the exact command sequence.
 4. **Saved networks** (`store.go`): `/data/wifi.json`, `0600`, atomic writes
    like `config`. Store `ssid`, `psk` as the 64-hex PSK derived with

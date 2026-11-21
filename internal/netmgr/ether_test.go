@@ -129,9 +129,16 @@ func TestEthernetFallsBackToLinkLocal(t *testing.T) {
 	if err := e.Down(context.Background()); err != nil {
 		t.Fatalf("Down: %v", err)
 	}
+	if got := r.snapshot(); got[len(got)-1] == "ip addr flush dev eth0" {
+		t.Errorf("a carrier-down event flushed the address: %v", got)
+	}
+
+	if err := e.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	last := r.snapshot()[len(r.snapshot())-1]
 	if last != "ip addr flush dev eth0" {
-		t.Errorf("last call after Down = %q", last)
+		t.Errorf("last call after Flush = %q", last)
 	}
 }
 
@@ -206,6 +213,95 @@ func TestEthernetDownStopsRetries(t *testing.T) {
 	if after != before {
 		t.Fatalf("retry ran after Down: %v", r.snapshot())
 	}
+}
+
+// A carrier blip must not disturb the address: no flush on the way down, and
+// DHCP on the way back up runs the same client as before, with the same
+// arguments (no release flag), so our script can keep the address under a live
+// TCP connection.
+func TestEthernetCarrierBlipKeepsAddress(t *testing.T) {
+	r := newFakeRunner(map[string][]error{"udhcpc": {nil, nil}})
+	e := NewEthernet("eth0", testMAC(), r, testLogger())
+
+	e.Up(context.Background())
+	if err := e.Down(context.Background()); err != nil {
+		t.Fatalf("Down: %v", err)
+	}
+	e.Up(context.Background())
+
+	calls := r.snapshot()
+	for _, c := range calls {
+		if strings.Contains(c, "ip addr flush") {
+			t.Fatalf("a carrier blip flushed the address: %v", calls)
+		}
+		if strings.Contains(c, "ip link set") && strings.HasSuffix(c, " down") {
+			t.Fatalf("a carrier blip brought the link down: %v", calls)
+		}
+	}
+	if len(calls) != 4 {
+		t.Fatalf("calls = %v, want 4 (up, dhcp, up, dhcp)", calls)
+	}
+	if calls[1] != calls[3] {
+		t.Errorf("dhcp changed between the two carrier-up events: %q vs %q", calls[1], calls[3])
+	}
+}
+
+// udhcpc must never be told to release the address on exit: -R means
+// "Release IP on exit" (busybox udhcpc --help) and its script then runs
+// deconfig, which is exactly the teardown a carrier blip must avoid.
+func TestDHCPLeaseNeverReleases(t *testing.T) {
+	r := newFakeRunner(map[string][]error{"udhcpc": {nil}})
+	if !dhcpLease(context.Background(), r, "eth0", time.Second) {
+		t.Fatal("dhcpLease reported no lease")
+	}
+	calls := r.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("calls = %v, want 1", calls)
+	}
+	for _, field := range strings.Fields(calls[0]) {
+		if field == "-R" || field == "--release" {
+			t.Errorf("udhcpc got a release flag: %q", calls[0])
+		}
+	}
+	if !strings.Contains(calls[0], "-s /usr/share/udhcpc/default.script") {
+		t.Errorf("udhcpc did not use our script: %q", calls[0])
+	}
+}
+
+// Leaving managed mode must still be able to hand a clean interface over.
+func TestEthernetFlushRemovesAddress(t *testing.T) {
+	r := newFakeRunner(map[string][]error{"udhcpc": {nil}})
+	e := NewEthernet("eth0", testMAC(), r, testLogger())
+	e.Up(context.Background())
+	if err := e.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	calls := r.snapshot()
+	if calls[len(calls)-1] != "ip addr flush dev eth0" {
+		t.Fatalf("last call = %q, want a flush", calls[len(calls)-1])
+	}
+}
+
+// LinkDownOnCarrierLoss is the opt-in for drivers that need the link taken
+// down; it takes the link down but still keeps the address.
+func TestEthernetDownCanTakeLinkDown(t *testing.T) {
+	r := newFakeRunner(nil)
+	e := NewEthernet("eth0", testMAC(), r, testLogger())
+	e.LinkDownOnCarrierLoss = true
+	if err := e.Down(context.Background()); err != nil {
+		t.Fatalf("Down: %v", err)
+	}
+	calls := r.snapshot()
+	if len(calls) != 1 || calls[0] != "ip link set eth0 down" {
+		t.Fatalf("calls = %v, want only the link down", calls)
+	}
+}
+
+// missingInterfaceName is a name no interface can have on Linux (15 chars is
+// the limit, and every real one is shorter).
+func missingInterfaceName(t *testing.T) string {
+	t.Helper()
+	return "wat-nope-0123456"
 }
 
 func TestLinkLocalIPRangeAndDeterminism(t *testing.T) {

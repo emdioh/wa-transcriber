@@ -207,3 +207,67 @@ func TestManagedFirstPollDrivesEthernetWithCarrierDown(t *testing.T) {
 		t.Errorf("a repeated poll re-ran commands: %v", run.snapshot())
 	}
 }
+
+// The board log shows carrier up (first) at 19.3 s, a lease at 22.6 s, then
+// carrier down at 23.3 s: a flap right after boot, while pairing sockets are
+// being opened. The managed loop must not flush the address on that down
+// event, so the address and its sockets survive until DHCP returns.
+func TestManagedCarrierFlapKeepsEthernetAddress(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "net")
+	dir := filepath.Join(base, "eth0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "devices", "eth0"), filepath.Join(dir, "device")); err != nil {
+		t.Fatal(err)
+	}
+	carrier := filepath.Join(dir, "carrier")
+	if err := os.WriteFile(carrier, []byte("0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := newFakeRunner(map[string][]error{"udhcpc": {nil, nil}})
+	m := newManaged(nil, func() []status.Addr { return nil }, func() bool { return true }, testLogger())
+	m.base = base
+	m.run = run
+	if err := m.discover(); err != nil {
+		t.Fatal(err)
+	}
+	step := func() {
+		m.step(context.Background())
+		// stepEthernet runs Up/Down in a goroutine: wait for it to finish.
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			m.mu.Lock()
+			busy := m.eths["eth0"].busy
+			m.mu.Unlock()
+			if !busy {
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		t.Fatal("ethernet step never finished")
+	}
+
+	step() // first poll, carrier 0: still brings the link up
+	if err := os.WriteFile(carrier, []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	step() // carrier up
+	if err := os.WriteFile(carrier, []byte("0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	step() // carrier down (the boot flap)
+	if err := os.WriteFile(carrier, []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	step() // carrier back up: DHCP again
+
+	calls := strings.Join(run.snapshot(), "\n")
+	if strings.Contains(calls, "ip addr flush") {
+		t.Fatalf("the boot flap flushed the address:\n%s", calls)
+	}
+	if !strings.Contains(calls, "ip link set eth0 down") && strings.Count(calls, "udhcpc ") != 3 {
+		t.Fatalf("dhcp did not run on every carrier-up event:\n%s", calls)
+	}
+}

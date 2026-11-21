@@ -97,6 +97,9 @@ func (w *WifiClient) Connect(ctx context.Context) error {
 		out, err := w.Runner.Run(ctx, "wpa_cli", "-p", w.CtrlDir, "-i", w.IfName, "status")
 		if err == nil {
 			if state, _ := parseWPACliStatus(out); state == "COMPLETED" {
+				// The interface may still hold its address from before the AP
+				// came back; our udhcpc script keeps it (or replaces it if the
+				// lease changed) without tearing the link down.
 				if dhcpLease(ctx, w.Runner, w.IfName, 15*time.Second) {
 					return nil
 				}

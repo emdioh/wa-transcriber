@@ -1,0 +1,189 @@
+#!/bin/sh
+#
+# udhcpc script for wa-transcriber: idempotent, so a DHCP rebind never tears
+# down a working interface.
+#
+# The stock script (Buildroot's package/busybox/udhcpc.script, installed at
+# this path) runs "/sbin/ifconfig $interface 0.0.0.0" on deconfig and
+# "/sbin/ifconfig $interface $ip netmask ..." on bound. Both drop the address
+# for a moment; that kills every socket bound or connected on it (the
+# WhatsApp websocket, in-flight uploads, mDNS). The boards flap their carrier
+# right after boot (wat-f2z.9), so the lease arrived about a second after
+# startup and the websocket died with it -- for an address that had not even
+# changed.
+#
+# This script therefore:
+#   deconfig       touches nothing on the interface and leaves resolv.conf
+#                  alone (it is already correct, and any daemon using it keeps
+#                  working);
+#   bound / renew  puts the link up and uses "ip addr replace", which is a
+#                  netlink no-op when the address is the same and an atomic
+#                  swap when the lease really moved to another address.
+#
+# udhcpc is run with -n -q and without -R (which means "release IP on exit"),
+# so it exits after one lease and never releases or deconfigures on the way
+# out.
+#
+# $mask is the prefix length as a number and $subnet the dotted netmask
+# (verified on a BeagleBone Black with busybox 1.36.1); the dotted form is
+# converted when $mask is missing. Everything runs on busybox applets only.
+
+RESOLV_CONF=/etc/resolv.conf
+interface=${interface:-eth0}
+
+log() {
+	logger -t udhcpc-script "$*" 2>/dev/null || true
+}
+
+# netmask_to_prefix prints the prefix length of a dotted netmask, or nothing
+# when the value is not a contiguous run of set bits.
+netmask_to_prefix() {
+	IFS=.
+	# shellcheck disable=SC2086 # word splitting on the dots is the point
+	set -- $1
+	IFS=" "
+	[ $# -eq 4 ] || return 0
+	v=0
+	for o in "$@"; do
+		case "$o" in
+		'' | *[!0-9]*) return 0 ;;
+		esac
+		[ "$o" -le 255 ] || return 0
+		v=$((v * 256 + o))
+	done
+	# A netmask is 1..32 leading ones then zeros: ~v + 1 must be a power of
+	# two (the shift amount).
+	inv=$(( (0xFFFFFFFF ^ v) & 0xFFFFFFFF ))
+	[ $((inv & (inv + 1))) -eq 0 ] || return 0
+	n=0
+	while [ "$v" -ne 0 ]; do
+		n=$((n + 1))
+		v=$(( (v << 1) & 0xFFFFFFFF ))
+	done
+	echo "$n"
+}
+
+prefix_len() {
+	# busybox exports the prefix length as $mask; some versions/builds carry
+	# only the dotted netmask $subnet (both were checked on the board).
+	case "$mask" in
+	'' | *[!0-9]*) ;;
+	*) echo "$mask"; return ;;
+	esac
+	case "$prefix" in
+	'' | *[!0-9]*) ;;
+	*) echo "$prefix"; return ;;
+	esac
+	if [ -n "$subnet" ]; then
+		netmask_to_prefix "$subnet"
+	fi
+}
+
+# write_resolv rewrites /etc/resolv.conf only when the content differs, so
+# the mtime (and every reader of the file) is left alone on a rebind.
+write_resolv() {
+	[ -e "$RESOLV_CONF" ] || touch "$RESOLV_CONF" 2>/dev/null || return 0
+
+	search_list=""
+	if [ -n "$search" ]; then
+		search_list=$search
+	elif [ -n "$domain" ]; then
+		search_list=$domain
+	fi
+
+	tmp=/tmp/resolv.conf.$$
+	{
+		[ -n "$search_list" ] && echo "search $search_list"
+		for ns in $dns; do
+			echo "nameserver $ns"
+		done
+	} >"$tmp" 2>/dev/null || return 0
+
+	if ! cmp -s "$tmp" "$RESOLV_CONF"; then
+		# /etc/resolv.conf may be a symlink into a tmpfs: overwrite the
+		# content, never replace the file.
+		cat "$tmp" >"$RESOLV_CONF"
+		log "resolv.conf updated for $interface"
+	fi
+	rm -f "$tmp"
+}
+
+case "$1" in
+deconfig)
+	# Deliberately nothing: the only callers are a first DHCP attempt and the
+	# lease-expiry retry, and the interface may well be carrying a live
+	# connection with a perfectly good address. The stock script drops the
+	# address here; this one waits for "bound" to say what the real lease is.
+	log "deconfig on $interface: keeping address"
+	;;
+bound | renew)
+	ip link set "$interface" up
+
+	if [ -n "$ip" ]; then
+		pfx=$(prefix_len)
+		if [ -n "$pfx" ]; then
+			ip addr replace "$ip/$pfx" dev "$interface" ||
+				log "ip addr replace $ip/$pfx on $interface failed"
+			# "ip addr replace" only swaps an entry for the *same*
+			# address: when the lease moved to another address it is
+			# added next to the old one. Drop the leftovers, except
+			# 169.254/16 (the DHCP-less fallback, removed by netmgr) and
+			# the address we just set. This runs only when the lease
+			# really changed, never on a rebind of the same one.
+			ip -4 -o addr show dev "$interface" 2>/dev/null |
+				awk '$3 == "inet" { print $4 }' |
+				while read -r cidr; do
+					case "$cidr" in
+					"$ip/$pfx") continue ;;
+					169.254.*) continue ;;
+					"") continue ;;
+					esac
+					ip addr del "$cidr" dev "$interface" &&
+						log "dropped stale address $cidr on $interface"
+				done
+		else
+			log "no usable prefix for $ip on $interface"
+		fi
+	fi
+
+	# RFC3442: a Classless Static Routes option makes the Router option
+	# invalid; honour staticroutes first when a server sends it.
+	if [ -n "$staticroutes" ]; then
+		set -- $staticroutes
+		while [ -n "$1" ] && [ -n "$2" ]; do
+			ip route replace "$1" via "$2" dev "$interface"
+			shift 2
+		done
+	elif [ -n "$router" ]; then
+		for gw in $router; do
+			ip route replace default via "$gw" dev "$interface"
+		done
+	fi
+
+	write_resolv
+
+	if [ -n "$ipv6" ]; then
+		# No DHCPv6 setup here; only keep the address if a server hands one
+		# out, never wait for an IPv6 default route (delay without benefit).
+		ip -6 addr replace "$ipv6/128" dev "$interface" 2>/dev/null || true
+	fi
+	;;
+leasefail)
+	log "lease failed on $interface"
+	;;
+nak)
+	log "lease nak on $interface"
+	;;
+*)
+	log "unknown action $1 on $interface"
+	;;
+esac
+
+# Third-party hooks keep working: same directory the stock script uses.
+HOOK_DIR="$0.d"
+for hook in "$HOOK_DIR"/*; do
+	[ -f "$hook" ] && [ -x "$hook" ] || continue
+	"$hook" "$1"
+done
+
+exit 0

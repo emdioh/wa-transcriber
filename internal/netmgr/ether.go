@@ -12,8 +12,9 @@ import (
 )
 
 // Ethernet manages one ethernet interface: on carrier up it tries DHCP and
-// falls back to an IPv4 link-local address; on carrier down it flushes
-// addresses. The carrier signal itself is fed by the caller (see linux.go).
+// falls back to an IPv4 link-local address; on carrier down it keeps the
+// address and only stops DHCP. The carrier signal itself is fed by the caller
+// (see linux.go).
 type Ethernet struct {
 	IfName string
 	MAC    net.HardwareAddr
@@ -24,6 +25,11 @@ type Ethernet struct {
 	After         func(time.Duration) <-chan time.Time
 	DHCPTimeout   time.Duration // deadline for one DHCP attempt
 	RetryInterval time.Duration // how often DHCP is retried while on link-local
+	// LinkDownOnCarrierLoss takes the link administratively down on carrier
+	// loss. Default false: Linux keeps the interface (and its addresses and
+	// TCP connections) usable, and forcing it down on every carrier blip
+	// would both kill sockets and drop a lease that is not really gone.
+	LinkDownOnCarrierLoss bool
 
 	mu     sync.Mutex
 	cancel func()
@@ -57,6 +63,10 @@ func (e *Ethernet) Up(ctx context.Context) {
 		e.Log.Error("ethernet: bring link up", "iface", e.IfName, "err", err)
 		return
 	}
+	// Our own udhcpc script (os/board/common/rootfs-overlay/usr/share/
+	// udhcpc/default.script) keeps the address across a rebind: it never
+	// deconfigures the interface and only replaces the address when it
+	// really changed, so a carrier blip does not kill live connections.
 	if e.tryDHCP(ctx) {
 		e.Log.Info("ethernet: dhcp lease", "iface", e.IfName)
 		return
@@ -71,9 +81,25 @@ func (e *Ethernet) Up(ctx context.Context) {
 	go e.retryDHCP(retryCtx, ip)
 }
 
-// Down handles a carrier-down event: it stops any DHCP retry loop and flushes
-// the interface's addresses.
+// Down handles a carrier-down event: it stops any DHCP retry loop and, by
+// default, leaves the interface and its addresses alone, so a carrier blip
+// does not tear down established connections. The retry loop of the last Up
+// is gone (the link was up), so DHCP runs again on the next carrier-up event.
 func (e *Ethernet) Down(ctx context.Context) error {
+	if c := e.takeCancel(); c != nil {
+		c()
+	}
+	if !e.LinkDownOnCarrierLoss {
+		e.Log.Info("ethernet: carrier down, keeping addresses", "iface", e.IfName)
+		return nil
+	}
+	_, err := e.Runner.Run(ctx, "ip", "link", "set", e.IfName, "down")
+	return err
+}
+
+// Flush is the explicit teardown: it stops DHCP and removes every address,
+// for when the interface is handed over to another owner.
+func (e *Ethernet) Flush(ctx context.Context) error {
 	if c := e.takeCancel(); c != nil {
 		c()
 	}
@@ -103,13 +129,16 @@ func (e *Ethernet) tryDHCP(ctx context.Context) bool {
 
 // dhcpLease runs one bounded udhcpc attempt on ifname. -n makes udhcpc exit
 // (0/1) instead of retrying in the foreground, so timeout is the outer bound
-// of the attempt.
+// of the attempt. There is no release flag: -R would release the address on
+// exit (busybox: "Release IP on exit"), which tears down exactly what a
+// carrier blip must keep. Keeping the address across a rebind is the job of
+// our script, not of a client flag (see docs/ARCHITECTURE.md D16).
 func dhcpLease(ctx context.Context, r Runner, ifname string, timeout time.Duration) bool {
 	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	_, err := r.Run(dctx, "udhcpc",
-		"-n", "-i", ifname, "-f", "-q", "-t", "5", "-T", "3",
-		"-s", "/usr/share/udhcpc/default.script")
+	args := []string{"-n", "-i", ifname, "-f", "-q", "-t", "5", "-T", "3",
+		"-s", "/usr/share/udhcpc/default.script"}
+	_, err := r.Run(dctx, "udhcpc", args...)
 	return err == nil
 }
 
