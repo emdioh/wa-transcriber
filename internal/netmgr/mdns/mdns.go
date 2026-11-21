@@ -70,6 +70,23 @@ func indexOf(s string, b byte) int {
 // packet asks for something else. ifIP is the address on the interface the
 // query arrived on.
 func (r *Responder) Answer(query []byte, ifIP net.IP) (*Response, error) {
+	return r.answer(query, ifIP, false)
+}
+
+// AnswerTo is Answer for a query that came from a source port other than 5353.
+// Such a querier is a "simple resolver" doing one-shot queries (RFC 6762
+// section 5.1), and section 6.7 requires a conventional unicast response:
+// the query ID and the question are repeated, the cache-flush bit is not set
+// and the TTL is at most ten seconds. Android's resolver sends exactly these
+// one-shot queries, so without this its resolve of wa.local fails even when
+// the packet arrives.
+func (r *Responder) AnswerTo(query []byte, ifIP net.IP, legacy bool) (*Response, error) {
+	return r.answer(query, ifIP, legacy)
+}
+
+const legacyTTL = 10
+
+func (r *Responder) answer(query []byte, ifIP net.IP, legacy bool) (*Response, error) {
 	ip4 := ifIP.To4()
 	if ip4 == nil {
 		return nil, errors.New("mdns: not an IPv4 address")
@@ -113,6 +130,7 @@ func (r *Responder) Answer(query []byte, ifIP net.IP) (*Response, error) {
 	}
 
 	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{
+		ID:            responseID(hdr.ID, legacy),
 		Response:      true,
 		Authoritative: true,
 	})
@@ -133,8 +151,14 @@ func (r *Responder) Answer(query []byte, ifIP net.IP) (*Response, error) {
 	rr := dnsmessage.ResourceHeader{
 		Name:  r.fqdn(),
 		Type:  dnsmessage.TypeA,
-		Class: dnsmessage.ClassINET | cacheFlush,
+		Class: dnsmessage.ClassINET,
 		TTL:   TTL,
+	}
+	if legacy {
+		// Conventional response: no cache-flush bit, short TTL.
+		rr.TTL = legacyTTL
+	} else {
+		rr.Class |= cacheFlush
 	}
 	if err := b.AResource(rr, dnsmessage.AResource{A: a}); err != nil {
 		return nil, err
@@ -143,7 +167,17 @@ func (r *Responder) Answer(query []byte, ifIP net.IP) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Response{Packet: pkt, Unicast: unicast}, nil
+	return &Response{Packet: pkt, Unicast: unicast || legacy}, nil
+}
+
+// responseID returns the identifier a response carries: zero for multicast
+// responses (RFC 6762 section 18.1) and the query's identifier echoed back for
+// a legacy unicast response (section 6.7).
+func responseID(queryID uint16, legacy bool) uint16 {
+	if legacy {
+		return queryID
+	}
+	return 0
 }
 
 // Announce builds an unsolicited response (used after an address change).

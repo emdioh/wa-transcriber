@@ -128,7 +128,11 @@ func Listen(ctx context.Context, r *Responder, ifaces func() []Iface, log *slog.
 		if localIP == nil {
 			continue
 		}
-		resp, err := r.Answer(pkt, localIP)
+		// A source port other than 5353 means a one-shot ("simple")
+		// resolver: RFC 6762 section 6.7 wants a conventional unicast
+		// response, and Android's resolver is exactly that.
+		legacy := isLegacySource(src)
+		resp, err := r.AnswerTo(pkt, localIP, legacy)
 		if err != nil || resp == nil {
 			continue
 		}
@@ -235,6 +239,16 @@ func (t *addrTracker) Changed(ifaces []Iface) []Iface {
 // address there is. Unicast queries arrive without the multicast control
 // message on some systems, and dropping them made the device invisible to
 // resolvers that ask it directly.
+// isLegacySource reports whether the query came from a source port other than
+// 5353, i.e. from a one-shot resolver that expects a conventional unicast
+// response (RFC 6762 section 6.7).
+func isLegacySource(src net.Addr) bool {
+	if ua, ok := src.(*net.UDPAddr); ok {
+		return ua.Port != 5353
+	}
+	return false
+}
+
 func localIPFor(ifaces []Iface, cm *ipv4.ControlMessage, src net.Addr) net.IP {
 	if cm != nil {
 		if cm.Dst != nil {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/net/ipv4"
 )
 
@@ -268,5 +269,110 @@ func TestIsMulticast(t *testing.T) {
 	}
 	if isMulticast(nil, gaddr) {
 		t.Fatal("missing control message must not count as multicast")
+	}
+}
+
+// A one-shot query (source port other than 5353) must be answered with a
+// conventional unicast response: same query ID, question repeated, no
+// cache-flush bit, TTL at most 10 s (RFC 6762 section 6.7). Android's resolver
+// sends exactly this query for wa.local.
+func TestLegacyUnicastResponseFormat(t *testing.T) {
+	r := &Responder{Name: "wa"}
+	n, err := dnsmessage.NewName("wa.local.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const qid = 0x4321
+	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: qid})
+	if err := b.StartQuestions(); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Question(dnsmessage.Question{
+		Name:  n,
+		Type:  dnsmessage.TypeA,
+		Class: dnsmessage.ClassINET | unicastResponse,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	query, err := b.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := r.AnswerTo(query, net.IPv4(192, 168, 15, 43), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("no response for a one-shot query")
+	}
+	if !resp.Unicast {
+		t.Error("legacy response must be sent unicast")
+	}
+
+	var p dnsmessage.Parser
+	hdr, err := p.Start(resp.Packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr.ID != qid {
+		t.Errorf("response ID = %#x, want the query ID %#x", hdr.ID, qid)
+	}
+	q, err := p.Question()
+	if err != nil {
+		t.Fatalf("legacy response must repeat the question: %v", err)
+	}
+	if q.Name.String() != n.String() {
+		t.Errorf("question name = %s, want %s", q.Name, n)
+	}
+	for {
+		ah, err := p.AnswerHeader()
+		if err != nil {
+			break
+		}
+		if ah.Type != dnsmessage.TypeA {
+			if err := p.SkipAnswer(); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if _, err := p.AResource(); err != nil {
+			t.Fatal(err)
+		}
+		if uint16(ah.Class)&cacheFlush != 0 {
+			t.Error("cache-flush bit set on a legacy unicast response")
+		}
+		if ah.TTL > legacyTTL {
+			t.Errorf("TTL = %d, want at most %d", ah.TTL, legacyTTL)
+		}
+	}
+}
+
+// A multicast response keeps the mDNS form: ID zero, cache-flush set, TTL 120.
+func TestMulticastResponseKeepsMDNSForm(t *testing.T) {
+	r := &Responder{Name: "wa"}
+	query := buildQuery(t, "wa.local.", dnsmessage.TypeA, true)
+	resp, err := r.AnswerTo(query, net.IPv4(192, 168, 15, 43), false)
+	if err != nil || resp == nil {
+		t.Fatalf("AnswerTo: %v", err)
+	}
+	_, ip, hdr := parseA(t, resp.Packet)
+	if hdr.ID != 0 {
+		t.Errorf("response ID = %d, want 0 for a multicast response", hdr.ID)
+	}
+	if !ip.Equal(net.IPv4(192, 168, 15, 43)) {
+		t.Errorf("A = %v", ip)
+	}
+}
+
+func TestIsLegacySource(t *testing.T) {
+	if !isLegacySource(&net.UDPAddr{IP: net.IPv4(192, 168, 15, 13), Port: 40000}) {
+		t.Error("an ephemeral source port is a one-shot resolver")
+	}
+	if isLegacySource(&net.UDPAddr{IP: net.IPv4(192, 168, 15, 13), Port: 5353}) {
+		t.Error("port 5353 is a full mDNS querier, not a one-shot resolver")
+	}
+	if isLegacySource(&net.UnixAddr{Name: "x", Net: "unix"}) {
+		t.Error("a non-UDP source must not be treated as legacy")
 	}
 }

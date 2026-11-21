@@ -228,8 +228,28 @@ natively; older versions only offer `NsdManager` service discovery, where a
   code logged it and never joined that interface, so a Wi-Fi interface
   appearing later was never joined either.
 
+- **One-shot replies were not conventional.** A query from a source port other
+  than 5353 comes from a "simple resolver" doing one-shot lookups, and RFC 6762
+  section 6.7 requires the reply to look like a common DNS answer: the query ID
+  repeated, the question repeated, no cache-flush bit, TTL at most 10 s. The
+  responder sent ID 0, no question, cache-flush set and TTL 120, which a
+  resolver like Android's may well discard. The mDNS reflector on the owner's
+  LAN does it right, which is presumably why the name resolved from a laptop
+  and not from the phone.
+
 Fixes: one socket bound to the wildcard address joining the group per
 interface (like avahi), joining interfaces that appear later, answering
-unicast queries too, and only renaming when the conflicting record names a
-different address. Unit tests: `TestOwnAnnouncementIsNotAConflict`,
-`TestLocalIPFor`, `TestIsMulticast`. Not yet confirmed on the board.
+unicast queries too, conventional one-shot replies, and renaming only when the
+conflicting record names a different address. Unit tests:
+`TestOwnAnnouncementIsNotAConflict`, `TestLocalIPFor`, `TestIsMulticast`,
+`TestLegacyUnicastResponseFormat`, `TestMulticastResponseKeepsMDNSForm`,
+`TestIsLegacySource`.
+
+Deployed to the board by hand on 2026-11-21 (`226eade4...`,
+`v0.1.1-26-g67f9c3e`): `udp 0.0.0.0:5353` is bound, a query sent straight to
+192.168.15.43:5353 is answered (it was silent before), a multicast one-shot
+query gets two answers, the board's own with `class 0x8001`, ID echoed and
+TTL 10, and `wa-2.local` does not exist, so the device no longer renames
+itself on its own reflected address. The WhatsApp session survived both
+binary swaps (`/data/session.db` intact, one ESTABLISHED socket to WhatsApp).
+A phone test is still the owner's step.
