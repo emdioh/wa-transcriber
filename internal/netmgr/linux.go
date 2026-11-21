@@ -38,8 +38,15 @@ type managed struct {
 }
 
 type ethUnit struct {
-	dev      *Ethernet
-	carrier  bool
+	dev     *Ethernet
+	carrier bool
+	// known is false until the first poll has seen this interface. The
+	// carrier file of an administratively down interface reads 0, and
+	// nothing else brings the link up on a stock image (Buildroot's
+	// S40network is not installed), so treating the zero carrier value as
+	// "already down" would deadlock: Up() would never run, the link would
+	// never come up and DHCP would never be attempted.
+	known    bool
 	busy     bool
 	lastSeen time.Time
 }
@@ -204,10 +211,14 @@ func (m *managed) stepEthernet(ctx context.Context, info InterfaceInfo) {
 		m.mu.Unlock()
 		return
 	}
-	if u.carrier == info.Carrier || u.busy {
+	// The first poll after discovery always acts, even when the carrier
+	// reads 0: that is the state of a link nobody has brought up yet.
+	first := !u.known
+	if (u.known && u.carrier == info.Carrier) || u.busy {
 		m.mu.Unlock()
 		return
 	}
+	u.known = true
 	u.carrier = info.Carrier
 	u.busy = true
 	dev := u.dev
@@ -219,8 +230,12 @@ func (m *managed) stepEthernet(ctx context.Context, info InterfaceInfo) {
 			u.busy = false
 			m.mu.Unlock()
 		}()
-		if carrier {
-			m.log.Info("ethernet: carrier up", "iface", info.Name)
+		// "up" also covers the first poll of a link that has never been
+		// brought up: Ethernet.Up lifts the interface, which is what makes
+		// carrier appear on drivers that report 0 while the link is down
+		// (cpsw on the BeagleBone Black).
+		if carrier || first {
+			m.log.Info("ethernet: carrier up", "iface", info.Name, "first", first)
 			dev.Up(ctx)
 			return
 		}

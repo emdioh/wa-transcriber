@@ -219,10 +219,14 @@ Package layout (`internal/netmgr`):
 
 Behaviour:
 
-- **Ethernet**: on carrier up, `udhcpc -n` for 15 s; no lease → an IPv4
-  link-local address that passed 2 ARP probes (`arping -D`), retried from a
-  MAC hash on collision; DHCP is retried every 60 s and the link-local
-  address is dropped on success. Carrier down → `ip addr flush`.
+- **Ethernet**: the first poll after discovery always runs the up path,
+  even when `/sys/class/net/<if>/carrier` reads 0, because an interface
+  nobody has lifted reports no carrier and no later down→up transition
+  would ever be seen (this is why the BeagleBone Black got no DHCP lease).
+  Up means `ip link set <if> up` then `udhcpc -n` for 15 s; no lease → an
+  IPv4 link-local address that passed 2 ARP probes (`arping -D`), retried
+  from a MAC hash on collision; DHCP is retried every 60 s and the
+  link-local address is dropped on success. Carrier down → `ip addr flush`.
 - **WiFi**: config in `/run/wat/wpa.conf`, SSIDs written as hex so no
   quoting bug is possible; `wpa_supplicant` is supervised and restarted when
   it dies; connect = poll `wpa_cli status` for `COMPLETED` (45 s) then DHCP.

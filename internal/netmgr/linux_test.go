@@ -158,3 +158,52 @@ func TestManagedStatusAndSaveForget(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A freshly booted board has eth0 administratively down, so its carrier file
+// reads 0 and no later false->true transition ever happens unless somebody
+// lifts the link. The first poll must therefore drive Ethernet.Up (ip link
+// set up, then DHCP) even when the carrier reads 0, or the BeagleBone Black
+// never gets a DHCP client running at all.
+func TestManagedFirstPollDrivesEthernetWithCarrierDown(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "net")
+	for _, name := range []string{"eth0"} {
+		dir := filepath.Join(base, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(base, "devices", name), filepath.Join(dir, "device")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "carrier"), []byte("0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run := newFakeRunner(map[string][]error{"udhcpc": {nil}})
+	m := newManaged(nil, func() []status.Addr { return nil }, func() bool { return true }, testLogger())
+	m.base = base
+	m.run = run
+	if err := m.discover(); err != nil {
+		t.Fatal(err)
+	}
+
+	m.step(context.Background())
+	calls := run.waitFor(t, "udhcpc")
+	joined := strings.Join(calls, "\n")
+	if !strings.Contains(joined, "ip link set eth0 up") {
+		t.Errorf("the first poll did not lift the link:\n%s", joined)
+	}
+	if !strings.Contains(joined, "udhcpc -n -i eth0 -f -q -t 5 -T 3 -s /usr/share/udhcpc/default.script") {
+		t.Errorf("the first poll did not run the DHCP client:\n%s", joined)
+	}
+	if strings.Contains(joined, "ip addr flush") {
+		t.Errorf("the first poll flushed addresses instead of bringing the link up:\n%s", joined)
+	}
+
+	// The next poll sees the same carrier: no second run.
+	m.step(context.Background())
+	time.Sleep(50 * time.Millisecond)
+	if got := len(run.snapshot()); got != len(calls) {
+		t.Errorf("a repeated poll re-ran commands: %v", run.snapshot())
+	}
+}
