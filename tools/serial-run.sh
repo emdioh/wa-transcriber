@@ -33,7 +33,13 @@
 # fight over the same tty and both fail.
 set -eu
 
-dev=/dev/ttyACM0
+# The gadget re-enumerates on every reboot and the device NUMBER changes
+# (ttyACM0 <-> ttyACM1), so default to the most recently created node.
+default_dev() {
+	ls -1t /dev/ttyACM* /dev/ttyUSB* 2>/dev/null | head -1 || true
+}
+
+dev=${SERIAL_DEV:-$(default_dev)}
 wait_s=15
 baud=115200
 while [ $# -gt 0 ]; do
