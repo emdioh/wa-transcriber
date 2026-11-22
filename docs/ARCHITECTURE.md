@@ -433,7 +433,16 @@ then the card's DATA partition the old marker named (`from /dev/mmcblk0p4`)
 does not exist, so the marker sat there forever and the device booted
 unpaired.
 
-Three things this had to learn on the board, each now pinned by a test:
+Four things this had to learn on the board, each now pinned by a test:
+
+- the clone copies the card's **boot file verbatim**, and that file names the
+  root by device path (`root=/dev/mmcblk0p2`). Booted from the eMMC the same
+  partition is `/dev/mmcblk1p2`, so the kernel found no root, panicked before
+  userspace ran, and the board had neither network nor USB console — the one
+  failure that looks like a dead board. The install now rewrites `root=` in
+  the target's boot file (disk name only, partition number kept, rest of the
+  file byte-identical, temp name + rename) before writing the marker, and
+  reports the token it wrote;
 
 - the kernel still holds the target's **old** partition table after the clone,
   so `<target>p1` is unmountable (`EINVAL`) until `partx -u <disk>` makes the

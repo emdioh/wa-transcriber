@@ -48,6 +48,12 @@ type Request struct {
 	// Confirm is what the owner typed: it has to equal the target's device
 	// name ("/dev/mmcblk1") or its bare name ("mmcblk1").
 	Confirm string
+	// BootFile is the boot file's path inside the boot partition, where the
+	// kernel's root is named: "extlinux/extlinux.conf" on the BeagleBone
+	// Black, "cmdline.txt" on the Pi 2. The install rewrites root= there to
+	// name the *target's* disk, because the clone copies the card's file
+	// verbatim and the disk name changes (mmcblk0 -> mmcblk1).
+	BootFile string
 	// BootDir is the mounted boot partition of the *source* (/boot). It is
 	// where the binary and the board settings came from; the marker itself
 	// is written on the boot partition of the *target*, which Install mounts
@@ -103,6 +109,9 @@ type Report struct {
 	Written bool
 	// Regions carries the hashes when Written is true.
 	Regions []Region
+	// Repointed is the target boot file's root= after the install
+	// ("root=/dev/mmcblk1p2"), "" when it needed no change.
+	Repointed string
 	// Staged lists the files the install put on the target's boot partition
 	// for the first boot to copy into /data, and Skipped those the running
 	// /data does not have.
@@ -313,9 +322,10 @@ func Install(ctx context.Context, req Request) (Report, error) {
 	// and on the board that device is simply not there at that moment. The
 	// marker goes last: a marker on a boot partition whose staged files are
 	// not all there yet would make that first boot copy half a session.
-	stage, serr := OnTargetBoot(req, p.Target, req.stageFunc(p.Marker))
+	stage, serr := OnTargetBoot(req, p.Target, req.stageFunc(p.Marker, p.Target))
 	rep.Written = true
 	rep.Staged, rep.Skipped = stage.Files, stage.Skipped
+	rep.Repointed = stage.Repointed
 	if serr != nil {
 		rep.Unpaired = true
 		rep.UnpairedWhy = fmt.Sprintf("the session could not be staged (%v), so the device will boot unpaired: "+
@@ -416,15 +426,30 @@ func (r Request) dataDir() string {
 // stageFunc is what runs inside the writable window on the target's boot
 // partition: the files into MigrateDir, then the marker listing them, last.
 // The request's own Stage wins (a test).
-func (r Request) stageFunc(m Marker) func(dir string) (Stage, error) {
+func (r Request) stageFunc(m Marker, t Target) func(dir string) (Stage, error) {
 	if r.Stage != nil {
 		return r.Stage
 	}
 	return func(dir string) (Stage, error) {
 		st, err := stageFiles(r.dataDir(), filepath.Join(dir, MigrateDir), MigrateFiles,
 			freeSpace(dir), blockSize(dir), r.logf())
-		if err != nil || len(st.Files) == 0 {
+		if err != nil {
 			return st, err
+		}
+		// The boot file must name the target's disk, not the card's: the
+		// clone copied it verbatim. Do it before the marker, so a power cut
+		// leaves no marker until the target is consistent.
+		logf := r.logf()
+		if token, err := repointBoot(dir, r.BootFile, "/dev/"+r.SourceName, t.Device); err != nil {
+			return st, err
+		} else if token != "" {
+			st.Repointed = token
+			logf("flash: the target's boot file now says %s", token)
+		} else {
+			logf("flash: the target's boot file already points at %s, left alone", t.Device)
+		}
+		if len(st.Files) == 0 {
+			return st, nil
 		}
 		// Only with files behind it: S01data copies from the staged
 		// directory and deletes the marker afterwards, so a marker with

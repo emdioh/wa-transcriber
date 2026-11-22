@@ -37,6 +37,10 @@ type fixture struct {
 	umounts []string
 }
 
+// bootFileRel is the boot file's path inside the boot partition of the
+// fixture, the same shape as the BeagleBone Black's.
+const bootFileRel = "extlinux/extlinux.conf"
+
 // newFixture builds a card with a 4 KiB MBR region and three 8 KiB
 // partitions, a 4 MiB eMMC disk and the sysfs entries that describe both.
 func newFixture(t *testing.T) *fixture {
@@ -60,9 +64,12 @@ func newFixture(t *testing.T) *fixture {
 	if err := os.MkdirAll(f.data, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(f.tboot, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(f.tboot, "extlinux"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The boot file the clone copied verbatim: it names the *card's* disk.
+	mustErr(os.WriteFile(filepath.Join(f.tboot, bootFileRel),
+		[]byte("label wa\n    kernel /zImage\n    append root=/dev/mmcblk0p2 ro rootwait\n"), 0o644))
 	// The running /data: the settings and a session with its WAL, and no
 	// wifi.json (a device that never joined a network).
 	mustErr(os.WriteFile(filepath.Join(f.data, "config.json"), []byte(`{"language":"it"}`), 0o600))
@@ -170,6 +177,7 @@ func (f *fixture) request() Request {
 		BootDir:    f.boot,
 		DataDir:    f.data,
 		Mounts:     f.mounts,
+		BootFile:   bootFileRel,
 		MountFunc:  f.mount,
 		RereadFunc: f.reread,
 		UmountFunc: f.umount,
@@ -903,4 +911,52 @@ func TestInstallDetachesTheStagingMount(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(f.dir, "run", "wat-stage")); err == nil {
 		t.Fatal("the staging mount point was left behind")
 	}
+}
+
+// TestInstallRepointsTheBootFile pins the bug that made the internal storage
+// look dead: the clone copies the card's boot file verbatim, and it names the
+// root by device path (/dev/mmcblk0p2). Booted from the eMMC that partition is
+// /dev/mmcblk1p2, so the kernel found no root, panicked before userspace, and
+// the board had no network and no USB console.
+func TestInstallRepointsTheBootFile(t *testing.T) {
+	t.Run("the clone names the target disk afterwards", func(t *testing.T) {
+		f := newFixture(t)
+		rep, err := Install(context.Background(), f.request())
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		// The fixture's devices are under a temp dir, so the token carries
+		// that path: what matters is the disk the root names.
+		want := "root=" + f.emmec + "p2"
+		if rep.Repointed != want {
+			t.Fatalf("repointed = %q, want %q", rep.Repointed, want)
+		}
+		got := string(read(t, filepath.Join(f.tboot, bootFileRel)))
+		if !strings.Contains(got, want) || strings.Contains(got, "mmcblk0p2") {
+			t.Fatalf("boot file after the install:\n%s", got)
+		}
+		// Everything else stays byte-identical.
+		if !strings.Contains(got, "label wa") || !strings.Contains(got, "kernel /zImage") {
+			t.Fatalf("the boot file lost its other lines:\n%s", got)
+		}
+	})
+	t.Run("a boot file already naming the target is left alone", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, bootFileRel)
+		mustErr(os.MkdirAll(filepath.Dir(path), 0o755))
+		before := "append root=/dev/mmcblk1p2 ro\n"
+		mustErr(os.WriteFile(path, []byte(before), 0o644))
+		token, err := repointBoot(dir, bootFileRel, "/dev/mmcblk0", "/dev/mmcblk1")
+		if err != nil || token != "" {
+			t.Fatalf("token = %q, err = %v, want no change", token, err)
+		}
+		if got := string(read(t, path)); got != before {
+			t.Fatalf("the file was rewritten: %q", got)
+		}
+	})
+	t.Run("a missing boot file is an error, not silence", func(t *testing.T) {
+		if _, err := repointBoot(t.TempDir(), bootFileRel, "/dev/mmcblk0", "/dev/mmcblk1"); err == nil {
+			t.Fatal("repointBoot accepted a missing boot file")
+		}
+	})
 }

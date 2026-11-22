@@ -1,6 +1,7 @@
 package flash
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +30,81 @@ type Stage struct {
 	// Skipped are the MigrateFiles that the running /data does not have (a
 	// device without wifi.json, or before the first pairing).
 	Skipped []string
+	// Repointed is the boot file's root= as it now reads on the target
+	// ("/dev/mmcblk1p2"), or "" when it needed no change.
+	Repointed string
+}
+
+// repointBoot points the target's boot file at the target's own disk. The
+// clone copies the card's boot file verbatim, and that file names the root by
+// device path: /dev/mmcblk0p2 on the card. Booted from the eMMC that
+// partition is /dev/mmcblk1p2, so without this the kernel finds no root,
+// panics before userspace, and the device looks dead on the network (no init,
+// no gadget serial) - found by booting the internal storage with the card
+// removed. The partition number is kept; only the disk name changes.
+func repointBoot(dir, bootFile, oldDisk, newDisk string) (string, error) {
+	if bootFile == "" || oldDisk == "" || newDisk == "" || oldDisk == newDisk {
+		return "", nil
+	}
+	path := filepath.Join(dir, bootFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("flash: reading the target's boot file %s: %w", bootFile, err)
+	}
+	old := "root=" + oldDisk + "p"
+	new := "root=" + newDisk + "p"
+	if !bytes.Contains(b, []byte(old)) {
+		// Already points at the target (or uses something else, e.g. a
+		// PARTUUID): leave it alone, that is not this function's business.
+		return "", nil
+	}
+	out := bytes.ReplaceAll(b, []byte(old), []byte(new))
+	if err := writeFileAtomic(path, out); err != nil {
+		return "", err
+	}
+	// Report the token as it now reads, e.g. "root=/dev/mmcblk1p2".
+	at := bytes.Index(out, []byte(new))
+	if at < 0 {
+		return new, nil
+	}
+	end := at + len(new)
+	for end < len(out) && !isSpaceByte(out[end]) {
+		end++
+	}
+	return string(out[at:end]), nil
+}
+
+// isSpaceByte matches the separators in a kernel command line.
+func isSpaceByte(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+
+// writeFileAtomic replaces path with b through a temp name in the same
+// directory (VFAT-safe name), fsync and rename.
+func writeFileAtomic(path string, b []byte) error {
+	dir := filepath.Dir(path)
+	tmp := filepath.Join(dir, migrateTempPrefix+filepath.Base(path))
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("flash: creating %s: %w", tmp, err)
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("flash: writing %s: %w", tmp, err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("flash: fsync %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("flash: close %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("flash: renaming %s into place: %w", path, err)
+	}
+	return syncDir(dir)
 }
 
 // ErrNoSpace is staging on a boot partition that is too small for the files.

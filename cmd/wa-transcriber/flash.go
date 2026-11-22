@@ -100,6 +100,23 @@ type flashPaths struct {
 	Logf func(format string, args ...any)
 }
 
+// bootFileInPartition is the boot file's path *inside* the boot partition
+// ("extlinux/extlinux.conf", "cmdline.txt"), from the board's image settings.
+// The install rewrites root= in it so the clone names the target's disk.
+func bootFileInPartition(req imageRequest, bootDir string) (string, error) {
+	s, err := readImageSettings(req.Layout)
+	if err != nil {
+		return "", err
+	}
+	// The boot partition is mounted at bootDir (the tests use a temp dir), so
+	// the file's path inside it is what follows that prefix.
+	prefix := strings.TrimSuffix(bootDir, "/") + "/"
+	if rel, ok := strings.CutPrefix(s.BootFile, prefix); ok && rel != "" {
+		return rel, nil
+	}
+	return "", fmt.Errorf("the boot file %q is not inside %s", s.BootFile, bootDir)
+}
+
 // flashRequest builds the flash.Request of an install to target ("" = the
 // rule's answer).
 func flashRequest(imgReq imageRequest, paths flashPaths, target, confirm string,
@@ -109,7 +126,12 @@ func flashRequest(imgReq imageRequest, paths flashPaths, target, confirm string,
 	if err != nil {
 		return req, err
 	}
+	bootFile, berr := bootFileInPartition(imgReq, paths.BootDir)
+	if berr != nil {
+		return req, berr
+	}
 	req = flash.Request{
+		BootFile:   bootFile,
 		Logf:       paths.Logf,
 		Sys:        flash.Sys{SysBlock: paths.SysBlock, DevDir: paths.DevDir, Root: paths.Root},
 		Source:     dev,

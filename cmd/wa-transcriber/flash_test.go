@@ -72,8 +72,13 @@ func newFlashBoard(t *testing.T) *flashBoard {
 	minor := (devNum>>12)<<8 | devNum&0xff
 	b.partDev("mmcblk0p2", strconv.FormatUint(major, 10)+":"+strconv.FormatUint(minor, 10))
 
+	// The target's boot partition carries the boot file the clone copied,
+	// naming the card's disk as the card's does.
+	mustCreate(t, b.tboot())
+	mustWrite(t, filepath.Join(b.tboot(), "extlinux.conf"),
+		[]byte("append root="+filepath.Join(dir, "mmcblk0")+"p2 ro rootwait\n"))
 	settings, _ := json.Marshal(map[string]any{
-		"board": "beagle", "boot_file": filepath.Join(dir, "extlinux.conf"), "slots": []string{"p2", "p3"},
+		"board": "beagle", "boot_file": filepath.Join(boot, "extlinux.conf"), "slots": []string{"p2", "p3"},
 	})
 	mustWrite(t, b.img.Layout, settings)
 	mounts := filepath.Join(dir, "mounts")
