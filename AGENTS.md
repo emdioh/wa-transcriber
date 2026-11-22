@@ -6,6 +6,53 @@ Project rules, architecture and milestones are in
 without discussing) and [docs/STATUS.md](docs/STATUS.md) (what is verified).
 Read them before larger changes.
 
+## Where we stopped (2026-11-23)
+
+**The board now boots from its eMMC.** Verified over ttyACM0 after the owner
+powered on with the SD card removed: `root=/dev/mmcblk1p2`, USB console back,
+`http://192.168.15.51/healthz` = 200. Getting there took four fixes, all in
+`internal/flash` and all tested: FAT-legal temp names for the staged files
+(a colon gave EINVAL), `partx -u` before mounting the freshly written boot
+partition, remount-read-only **and** unmount in the cleanup, and — the one that
+made the board look dead — rewriting `root=` in the target's boot file, which
+the clone copies verbatim from the card (`/dev/mmcblk0p2` there,
+`/dev/mmcblk1p2` on the eMMC). Details in `docs/ARCHITECTURE.md` section 11.
+
+**First thing to look at next session.** The `/data` migration looks *partial*
+on the eMMC: `/boot/wat-migrate.d/` is still there (with `config.json`,
+`session.db`) and `/data` holds `session.db*` but **no `config.json`**, so
+S01data copied some files and then did not finish or did not delete the marker
+and the staged directory. Nothing is lost (the SD card still has everything),
+but read `dmesg | grep S01data` / `/data` on the eMMC, find out why, fix it, and
+then the device comes up with its password and stays paired.
+
+Board state to know about:
+
+- the eMMC eMMC runs the **unpaired** device whose `config.json` I wrote during
+  one UI test: the web password is `testtest` wherever that file survives;
+- the SD card (2 GB) still holds the working, paired-by-nobody card; it takes
+  precedence over the eMMC whenever it is inserted, so putting it back is
+  always the way to get the old device;
+- `/tmp/wat-new` and `/tmp/flash.log` on the board are my test artifacts
+  (tmpfs, gone at the next reboot);
+- the images under `os/_output/` are from commit `481ff94`-era sources; the
+  Go changes after that are **not** in them (`make -C os bbb` rebuilds, and
+  `dist/` must be rebuilt first because the binary only rebuilds when its Go
+  sources change).
+
+**Open work, in order** (beads carry the detail):
+
+1. finish the `/data` migration check/fix (`wat-3h4.4`);
+2. prove the A/B switch **on the eMMC** (edit the eMMC's `extlinux.conf` to
+   `mmcblk1p3` and reboot, mirroring what was already proven on the SD);
+3. M10: a release carrying an `images` block, then the real install-from-the-
+   network test, power cuts, and the U-Boot bootcounter for a kernel that never
+   boots (`wat-kfd.2`, `.5`, `.6`);
+4. M9 leftovers: the field test on the Pi 2 (`wat-t3l.6`) and `!update`
+   (`wat-t3l.7`);
+5. the login-page reset (commit `438737c`) reaches the device only with the
+   next image.
+
 ## Current state (2026-11-20)
 
 Everything that needs no hardware, phone or Docker daemon is done and merged
