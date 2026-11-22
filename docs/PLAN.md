@@ -791,9 +791,125 @@ On both boards (owner):
 
 ### Gate out
 
-Ship as **v1.1**. Full-image updates (second root slot, RAUC/swupdate) become
-M10 if the owner wants them; they need a partition-table change, so they cost
-every existing device one last reflash.
+Ship as **v1.1**. Full-image updates are **M10**, install to internal flash
+is **M11**; both need a partition-table change, so they cost every existing
+device one last reflash.
+
+---
+
+## M10 — Image (OS) updates in place
+
+**Gate in**: M9 shipped (v1.1): devices already update the binary, the signed
+`manifest.json` exists and the owner holds the key. Hardware: a BeagleBone
+Black and a Pi 2 running a v1.1 image.
+
+**Decision**: the OS is updated by writing a **second root slot**, never over
+the running one, and `/data` is never touched by an image update.
+
+Layout today: p1 boot (FAT), p2 root (ext4, read-only), p3 data (ext4, made on
+first boot). Layout for M10: p1 boot, **p2 root A, p3 root B** (both ext4,
+read-only), p4 data. Moving from one root to two changes the partition table
+and the root's identity, so it costs exactly one reflash; after that every
+image update is in place.
+
+- The choice of slot lives in the **boot partition** (both bootloaders read
+  FAT): `uEnv.txt` on the BeagleBone Black, `config.txt` + `cmdline.txt` on
+  the Pi 2. An update writes the inactive slot, verifies it, then flips one
+  file and reboots.
+- **Health gate, same shape as M9**: starting a slot that has not confirmed
+  itself bumps a counter; the running system confirms after 60 s (reuse the
+  existing timer) and clears it; three unconfirmed starts fall back to the
+  other slot. The counter must be readable *and writable* by the bootloader,
+  so it lives next to the slot choice in the FAT boot partition.
+- **Manifest**: `manifest.json` gains `images: {beagle: {...}, rpi2: {...}}`
+  with file, sha256, size and the **layout version** it requires. Same key,
+  same signature. A device still on the old table prints "reflash once to
+  enable image updates" instead of downloading 200 MB.
+
+### Steps
+
+1. **Partitions**: genimage configs, `mkimage.sh`, `S01data` (finds DATA by
+   label already), `os/check.sh`; both images still build.
+2. **Bootloaders** (the real work, needs the consoles): slot selection and
+   the boot counter in `uEnv.txt` on the BBB; the Pi 2 equivalent. Prove each
+   by hand before writing Go.
+3. **`internal/imageupdate`**: download to `/data`, stream into the inactive
+   slot while hashing, fsync, verify by read-back, then flip the boot file and
+   the counter; never touch the running slot; reuse the M9 signature, atomic
+   write and health-timer code.
+4. **UI**: a "System image" card (slot in use, available image, install and
+   reboot, back to the previous image), hidden on the old layout where it
+   shows the "reflash once" line. `update_auto` covers images too, off by
+   default and never while a note is queued.
+5. **Release**: the workflow attaches both board images, `wat-manifest` writes
+   the `images` block, README/ARCHITECTURE updated.
+
+### Exit criteria
+
+- Both boards: an image update over the network → device boots the new root,
+  `/data` untouched (still paired), the UI shows the new image, the old slot
+  is still bootable and can be selected back.
+- Power cut 10× at random points (during the write, after the flip, before
+  the confirmation) → always comes up on a working slot.
+- A deliberately broken image (init exits) → automatic fallback after three
+  unconfirmed boots.
+- An old-layout device refuses with one line, never downloads.
+- Free space checked against the image size before the download starts.
+
+### Gate out
+
+**v1.2**. After this the only reason to touch a card is a damaged bootloader.
+
+---
+
+## M11 — Install from the SD card to the internal flash
+
+Why: the BeagleBone Black has a 4 GB eMMC and SD cards die. A device running
+from eMMC has no card to lose, and M9/M10 work there unchanged because the
+layout is identical.
+
+**Gate in**: M10 (two root slots) — otherwise the install repeats the
+partition work. Hardware: a BBB and one SD card.
+
+### Steps
+
+1. **Target selection by rule, not guess**: the block device whose
+   `/sys/block/*/device/type` is `MMC`, that is not the device the running
+   root came from, with its size; refuse when ambiguous and print the
+   candidates.
+2. **Clone mode**: `wa-transcriber -flash /dev/mmcblk1` and a System page
+   button behind a typed confirmation (like `RESET`). It writes *this card's*
+   image to the eMMC: MLO/U-Boot, boot partition, root slot, and a fresh DATA
+   partition — read from the SD card, nothing downloaded, so it works
+   offline.
+3. **`/data` migration**: create DATA on the eMMC, then copy `config.json`,
+   `session.db*` and `wifi.json` from the running `/data` (reuse the M9
+   snapshot code) so the device stays paired, then verify with sha256.
+4. **Verify before declaring success**: read the written regions back and
+   compare against the card before saying "remove the SD and reboot". On a
+   mismatch the eMMC is simply not bootable yet and the card still is — that
+   is the recovery path, and the operation is repeatable.
+5. **Progress on the console** (the UI will not survive the reboot) and in
+   the log buffer; a power cut leaves the eMMC half-written and the card
+   intact.
+6. **Boot order**: the AM335x ROM tries the SD first; document and check that
+   removing the card is what boots the eMMC, and that the eMMC carries its own
+   MLO/U-Boot at the expected offsets.
+7. **Docs**: README "install to internal flash", ARCHITECTURE note.
+
+### Exit criteria
+
+- On the BBB: install from SD to eMMC, power off, remove the card, boot from
+  eMMC → paired, same settings, transcribes, `/data` intact.
+- An M10 image update works on the eMMC device exactly as on the card.
+- Power cut during the install → the card still boots the device, re-running
+  the install completes it.
+- Refuses when the target is ambiguous, and refuses on a board without
+  internal flash (Pi 2) with one line.
+
+### Gate out
+
+**v1.3**, or folded into v1.2 if both land together.
 
 ---
 

@@ -51,6 +51,7 @@ v1, several WhatsApp accounts per device, Internet exposure of the UI.
 | D15 | **Plain HTTP** for the UI | Self-signed TLS | The device has no domain for a real certificate; self-signed TLS trains users to click through warnings. Acceptable on a home LAN / WPA2 setup AP; the UI must not be exposed to the Internet. |
 | D16 | **A carrier loss never touches the interface address**, and neither does a DHCP rebind: the rootfs overlay ships its own idempotent udhcpc script, and flushing is an explicit `Ethernet.Flush` teardown | Flush on carrier down (M5 as first designed); keep the stock script and pass `udhcpc -R` | Flushing the address on a carrier blip kills the WhatsApp websocket, in-flight uploads and mDNS sockets — and the boards flap right after boot (wat-f2z.9). The destructiveness is in the *script*, not in a client flag: busybox `udhcpc` runs it with `deconfig` before every attempt, and Buildroot's version does `ifconfig $interface 0.0.0.0` there and `ifconfig $interface $ip …` on `bound` — both drop the address. `-R` is worse, not better: it means "release IP on exit", so it runs `deconfig` again on the way out. Our script no-ops on `deconfig` and uses `ip addr replace` (a netlink no-op for an identical address) on `bound`/`renew`; the overlay is rsynced after packages, so it replaces the stock file. |
 | D17 | **Binary updates from GitHub releases, executed from `/data/bin` with three slots (active / previous / pending) and the read-only factory binary as the bootstrap** | Remounting the rootfs rw and overwriting `/usr/bin/wa-transcriber`; full A/B image updates (RAUC, swupdate); a Docker self-update | A running executable cannot be replaced anyway, and the rootfs is read-only by design (D13). Keeping the runtime binary on `/data` makes an update one file write plus one `exec`: no partition, bootloader or image work, and the factory binary on the read-only root can never be damaged by a failed update. Three slots (current, previous, next) is the most a small card needs for rollback; a try counter in `state.json` turns a crash loop into an automatic rollback. Docker is out on purpose: the scratch image has nothing to exec from a volume. Full-image updates wait for a second root slot. |
+| D18 | **Image updates write the inactive of two root slots; the boot partition (FAT) holds the slot choice and the boot counter; `/data` is never touched** | RAUC/SWUpdate bundles + U-Boot bootchooser; overwriting the single root in place | Two root partitions are the minimum honest A/B: a slot being written is never the one running, and `/data` (session, settings) does not move, so an image update cannot cost a re-pairing. The choice must sit where the bootloader can read *and write* it, which on these boards is the FAT boot partition, not ext4 `/data`. RAUC would work but brings a daemon, a D-Bus and a bundle format for one device class; the health gate we already have (M9) is the same idea in 20 lines. Cost: one reflash, because the partition table changes. |
 
 ## 3. Process layout
 
@@ -361,3 +362,11 @@ Checks: manual (System page button, 1 h cache in memory and on disk) plus an
 opt-in daily check (`update_check`), never in setup/AP mode; `update_auto`
 installs and restarts without asking, still behind the health gate and only
 when nothing is queued or transcribing.
+
+**The OS image is a separate mechanism (M10, D18)**: two root slots, the
+boot partition chooses, `/data` is untouched, and a boot counter falls back
+the same way M9's try counter does. The two share the manifest, the signature
+and the health timer, nothing else: the binary update is a file on `/data`,
+the image update is a block device. M11 adds the install of the whole card to
+the BeagleBone Black's eMMC, which is the same layout written from one device
+to another instead of over the network.
