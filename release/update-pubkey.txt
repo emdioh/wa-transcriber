@@ -29,3 +29,4 @@
 # binary that embeds the new public key.
 #
 # Public key goes on the next line, nothing else:
+BT2W168Q+f/nXltkyTAqZZtOCwzxAv2cy++Dxy6Sq34=

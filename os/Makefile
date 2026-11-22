@@ -47,10 +47,13 @@ prebuilt: $(GO_DIST)
 # before building for that reason.
 
 # Rebuild the binary whenever the Go sources change: os/prebuilt is a plain
-# copy, and a stale copy here put a three-commit-old binary on a board.
+# copy, and a stale copy here put a three-commit-old binary on a board. The
+# update public key counts as a source: it reaches the binary through the
+# Makefile's -X, and an image built before the key was committed has
+# self-updates compiled out.
 GO_SOURCES := $(shell find $(CURDIR)/.. -name '*.go' -not -path '*/_output/*' \
 	-not -path '*/dist/*' -not -path '*/data/*' 2>/dev/null) \
-	$(CURDIR)/../go.mod $(CURDIR)/../go.sum
+	$(CURDIR)/../go.mod $(CURDIR)/../go.sum $(CURDIR)/../release/update-pubkey.txt
 
 $(GO_DIST): $(GO_SOURCES)
 	$(MAKE) -C .. build-arm7
