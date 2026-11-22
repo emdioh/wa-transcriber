@@ -1,5 +1,9 @@
 # Helpers for the SD card layout, shared by S00boot and S01data.
 #
+# The card layout (D18): p1 boot (FAT), p2 root A, p3 root B, p4 DATA. Which
+# of p2/p3 is running does not matter to these helpers: they work on whatever
+# block device the root filesystem is on and on its whole disk.
+#
 # /proc/mounts names the root filesystem "/dev/root" (the kernel's placeholder
 # for the device given on the command line), so the real block device has to be
 # resolved through /sys/dev/block/<major>:<minor>. Parsing the first field of
@@ -46,6 +50,7 @@ wat_disk() {
 }
 
 # wat_part prints partition <n> of a disk: (/dev/mmcblk0, 3) -> /dev/mmcblk0p3.
+# Partition numbers follow the card layout: 1 boot, 2 root A, 3 root B, 4 DATA.
 wat_part() {
 	case "$1" in
 	/dev/mmcblk* | /dev/nvme*) echo "$1p$2" ;;

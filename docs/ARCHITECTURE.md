@@ -365,7 +365,12 @@ when nothing is queued or transcribing.
 
 **The OS image is a separate mechanism (M10, D18)**: two root slots, the
 boot partition chooses, `/data` is untouched, and a boot counter falls back
-the same way M9's try counter does. The two share the manifest, the signature
+the same way M9's try counter does. The card layout is p1 boot (FAT), p2 root
+A, p3 root B, p4 data; both roots are ext4 of the same size (160M, labels
+`wat-root-a`/`wat-root-b`), root B is empty in a fresh image, and data is
+still made on the first boot. The boot file names the slot by device path
+(`root=/dev/mmcblk0p2` for the first boot), computed from the running root so
+it works on SD and eMMC alike. The two share the manifest, the signature
 and the health timer, nothing else: the binary update is a file on `/data`,
 the image update is a block device. M11 adds the install of the whole card to
 the BeagleBone Black's eMMC, which is the same layout written from one device

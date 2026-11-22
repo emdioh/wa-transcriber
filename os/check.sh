@@ -83,6 +83,19 @@ for board in rpi2 bbb; do
 	done
 	[ -x "$HERE/board/$board/post-build.sh" ] || fail "board/$board/post-build.sh is not executable"
 	grep -q 'sdcard.img' "$HERE/board/$board/genimage.cfg" || fail "board/$board/genimage.cfg has no sdcard.img"
+	# Two root slots (D18): p1 boot, p2 root A, p3 root B, p4 data at first
+	# boot. Both roots are images in the config; the labels are set by
+	# mkimage.sh and are only asserted there.
+	for img in rootfs.ext4 rootfs-b.ext4; do
+		grep -q "image = \"$img\"" "$HERE/board/$board/genimage.cfg" ||
+			fail "board/$board/genimage.cfg has no partition for $img (two root slots, D18)"
+	done
+	[ "$(grep -c 'size = 160M' "$HERE/board/$board/genimage.cfg")" -ge 2 ] ||
+		fail "board/$board/genimage.cfg: the two root slots must both be 160M"
+	# The boot files name the first slot by device path, and no partition
+	# number after p3 may exist in the image: DATA is created on the board.
+	[ "$(grep -c 'partition ' "$HERE/board/$board/genimage.cfg")" -eq 3 ] ||
+		fail "board/$board/genimage.cfg must define exactly three partitions (boot, root A, root B)"
 	# Files named in a genimage vfat section must be produced by the build.
 	for f in $(sed -n '/vfat {/,/}/p' "$HERE/board/$board/genimage.cfg" |
 		sed -n 's/^[[:space:]]*"\([^"]*\)",*$/\1/p'); do
@@ -143,6 +156,20 @@ b=$(grep -n 'mkdir -p /run/lock' "$OVL/etc/inittab" | cut -d: -f1)
 [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] ||
 	fail "inittab must mount -a before creating /run/lock (read-only root)"
 grep -q 'sysfs' "$OVL/etc/fstab" || fail "fstab does not mount /sys (needed by mdev and the network manager)"
+# Layout with two root slots (D18): DATA is p4, found by its label, and the
+# script may never take one of the system partitions for it. The empty root B
+# is made by mkimage.sh with the same label the check asserts here.
+grep -q 'wat_part "\$disk" 4' "$OVL/etc/init.d/S01data" ||
+fail "S01data must take DATA from partition 4"
+grep -q -e '-o value -s LABEL' "$OVL/etc/init.d/S01data" ||
+fail "S01data must find DATA by its label"
+grep -q -e '-s LABEL "$dev"' "$OVL/etc/init.d/S01data" ||
+fail "S01data does not look for the DATA label"
+grep -q 'wat_part "\$disk" 2' "$OVL/etc/init.d/S01data" &&
+grep -q 'wat_part "\$disk" 3' "$OVL/etc/init.d/S01data" ||
+fail "S01data must know the two root slots (p2, p3) to stay off them"
+grep -q -- '--nr 4' "$OVL/etc/init.d/S01data" ||
+fail "S01data must hand partition 4 to the kernel (partx -a --nr 4)"
 # The boot partition carries wat.txt: without the mount the binary silently
 # falls back to its defaults.
 grep -q 'mount .*\-t vfat .* /boot' "$OVL/etc/init.d/S00boot" ||
@@ -184,6 +211,11 @@ ok "rootfs overlay"
 		echo "FAIL: wat_part /dev/sda 1" >&2
 		false
 	}
+	# The card layout is p1 boot, p2 root A, p3 root B, p4 DATA.
+	[ "$(wat_part /dev/mmcblk0 4)" = /dev/mmcblk0p4 ] || {
+		echo "FAIL: wat_part /dev/mmcblk0 4" >&2
+		false
+	}
 ) || fail "sd.sh helpers return the wrong device names"
 ok "sd.sh helpers"
 
@@ -219,6 +251,16 @@ grep -q 'quiet' "$HERE/board/bbb/extlinux.conf" &&
 	fail "bbb/extlinux.conf still passes quiet: the boot log is how we debug"
 grep -q 'console=tty1' "$HERE/board/rpi2/cmdline.txt" ||
 	fail "rpi2/cmdline.txt must keep console=tty1 (HDMI)"
+# First boot is root A = p2 on both boards, by device path (D18): a UUID
+# would have to be rewritten by every image update, and the running system
+# works out the other slot from its own block device.
+for f in "$HERE/board/bbb/extlinux.conf" "$HERE/board/rpi2/cmdline.txt"; do
+	grep -q 'root=/dev/mmcblk0p2' "$f" ||
+		fail "$f must boot /dev/mmcblk0p2 (root A)"
+	if grep -q 'root=UUID=\|root=LABEL=' "$f"; then
+		fail "$f names the root slot by UUID/LABEL: use the device path"
+	fi
+done
 ok "boot console"
 
 # --- helper scripts --------------------------------------------------------
@@ -226,6 +268,15 @@ ok "boot console"
 for s in mkimage.sh check.sh; do
 	[ -x "$HERE/$s" ] || fail "$s is not executable"
 done
+# mkimage.sh makes the empty second root slot and labels both: the labels are
+# how a human (and e2label in the field) tells root A from root B.
+for label in wat-root-a wat-root-b; do
+	grep -q "$label" "$HERE/mkimage.sh" || fail "mkimage.sh does not set the $label label"
+done
+grep -q 'host/sbin/mke2fs' "$HERE/mkimage.sh" ||
+	fail "mkimage.sh must use the Buildroot host mke2fs, not the host's"
+grep -q 'rootfs-b.ext4' "$HERE/mkimage.sh" ||
+	fail "mkimage.sh does not build the empty root B image"
 ok "helper scripts"
 
 if [ "$failed" -ne 0 ]; then
