@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -15,9 +14,9 @@ import (
 // Boot can fall back without a crash loop: a wrong-arch or truncated file is
 // refused before it is promoted or run.
 //
-// The arch comes from runtime.GOARCH/GOARM, the same pair AssetKey uses to
-// pick the asset; the caller therefore checks the file it just downloaded
-// against the binary that is running.
+// The arch comes from OwnAssetKey (runtime.GOARCH plus the recorded GOARM),
+// the same key AssetKey picks the release asset with; the caller therefore
+// checks the file it just downloaded against the binary that is running.
 func CheckExecutable(path, assetKey string) error {
 	st, err := os.Stat(path)
 	if err != nil {
@@ -73,7 +72,7 @@ func plainAssetKey(k string) (string, error) {
 
 // ownAssetKey is AssetKey for the machine this process was built for. GOARM
 // is a build-time constant, not an environment variable.
-func ownAssetKey() (string, error) { return AssetKey(runtime.GOARCH, goarm) }
+func ownAssetKey() (string, error) { return OwnAssetKey() }
 
 // checkMachine compares the ELF header to the expected asset key, being
 // stricter than Go's own loader where it is cheap: armv5/armv6/armv7 are

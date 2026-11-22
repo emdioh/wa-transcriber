@@ -91,6 +91,17 @@ func (c *Checker) client() *http.Client {
 // than TTL no request is made. With no key compiled in (Pub == nil) it fails
 // fast: an unverifiable manifest must never be offered.
 func (c *Checker) Latest(ctx context.Context) (*Manifest, error) {
+	return c.latest(ctx, false)
+}
+
+// Refresh is Latest that ignores the cache: the button that says "check now"
+// must reach GitHub even when a check ran ten minutes ago (that is how a
+// release published within the TTL is ever seen).
+func (c *Checker) Refresh(ctx context.Context) (*Manifest, error) {
+	return c.latest(ctx, true)
+}
+
+func (c *Checker) latest(ctx context.Context, force bool) (*Manifest, error) {
 	if len(c.Pub) != ed25519.PublicKeySize {
 		return nil, errors.New("update: no update public key, updates are off")
 	}
@@ -100,8 +111,10 @@ func (c *Checker) Latest(ctx context.Context) (*Manifest, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if m, ok := c.fresh(); ok {
-		return m, nil
+	if !force {
+		if m, ok := c.fresh(); ok {
+			return m, nil
+		}
 	}
 	m, entry, err := c.check(ctx)
 	if err != nil {

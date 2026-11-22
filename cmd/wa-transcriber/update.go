@@ -363,7 +363,7 @@ func (s *updateService) Status(context.Context) web.UpdateStatus {
 func (s *updateService) Check(ctx context.Context) (web.UpdateStatus, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.check(ctx); err != nil {
+	if err := s.check(ctx, true); err != nil {
 		return s.status(), err
 	}
 	return s.status(), nil
@@ -375,7 +375,7 @@ func (s *updateService) Install(ctx context.Context) (web.UpdateStatus, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.latest == nil || !update.IsUpgrade(s.current, s.latest.Version) {
-		if err := s.check(ctx); err != nil {
+		if err := s.check(ctx, false); err != nil {
 			return s.status(), err
 		}
 	}
@@ -415,8 +415,14 @@ func (s *updateService) Rollback(context.Context) (web.UpdateStatus, error) {
 }
 
 // check fetches the latest manifest; the caller holds s.mu.
-func (s *updateService) check(ctx context.Context) error {
-	m, err := s.checker.Latest(ctx)
+func (s *updateService) check(ctx context.Context, force bool) error {
+	fetch := s.checker.Latest
+	if force {
+		// The button says "check now": a cached answer from ten minutes ago
+		// would not show a release published since.
+		fetch = s.checker.Refresh
+	}
+	m, err := fetch(ctx)
 	if err != nil {
 		return err
 	}

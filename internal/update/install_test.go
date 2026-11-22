@@ -472,6 +472,31 @@ func TestCheckerLatest(t *testing.T) {
 			t.Fatal("Cached() empty after a fresh check")
 		}
 	})
+	t.Run("refresh ignores the cache", func(t *testing.T) {
+		// "Check now" after a release landed inside the TTL must see it: the
+		// cache is for the background path, not for the button.
+		rel, pub := signedRelease(t, "v0.2.0")
+		srv := httptest.NewServer(rel.handler())
+		defer srv.Close()
+		clock := testNow
+		c, _ := newChecker(t, srv.URL, pub, &clock)
+		if _, err := c.Latest(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got := rel.manifestHits.Load(); got != 1 {
+			t.Fatalf("manifest requests = %d, want 1", got)
+		}
+		m, err := c.Refresh(context.Background())
+		if err != nil {
+			t.Fatalf("Refresh: %v", err)
+		}
+		if m.Version != "v0.2.0" {
+			t.Fatalf("version = %q", m.Version)
+		}
+		if got := rel.manifestHits.Load(); got != 2 {
+			t.Fatalf("manifest requests = %d, want 2 within the TTL after Refresh", got)
+		}
+	})
 	t.Run("error leaves the cache", func(t *testing.T) {
 		rel, pub := signedRelease(t, "v0.2.0")
 		srv := httptest.NewServer(rel.handler())
