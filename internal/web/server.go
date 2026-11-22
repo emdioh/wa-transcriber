@@ -87,6 +87,10 @@ type Options struct {
 	// Updater drives the Software card on the System page; nil (Docker, dev
 	// machines, no update key) hides the card completely (M9, D17).
 	Updater Updater
+	// ImageUpdater drives the "System image" card (M10, D18); nil hides it
+	// completely, and an updater whose status has a LayoutError shows the
+	// "reflash once" line instead of the buttons.
+	ImageUpdater ImageUpdater
 	// Restart re-execs the process after an install or a rollback (main logs
 	// its own failure).
 	Restart func()

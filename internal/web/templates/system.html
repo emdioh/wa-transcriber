@@ -62,6 +62,41 @@
   {{end}}
 </section>
 {{end}}
+{{with .Image}}
+<section class="card">
+  <h2>System image</h2>
+  {{if .Status.LayoutError}}
+  <p class="flash err" role="status">⚠ {{.Status.LayoutError}}</p>
+  <p class="muted">The operating system itself can be updated in place: the new system is written to a second copy of the system partition and the device switches to it at the next start. Your settings, the WhatsApp session and the WiFi networks live on a separate partition and survive it. A card written by this older image has only one system partition, so it needs this one reflash; after that, image updates work from this page.</p>
+  {{else}}
+  <dl>
+    <dt>Running</dt><dd>slot {{.Status.Slot}}{{with .Status.Current}} · <code>{{.}}</code>{{end}}</dd>
+    <dt>Other slot</dt><dd>slot {{.Status.OtherSlot}} · {{if .Status.Bootable}}holds a verified image{{else}}no image installed{{end}}</dd>
+    <dt>Available</dt><dd>{{if .Status.Available}}{{.Status.Available}}{{with .Size}} · {{.}}{{end}}{{if .Status.NotesURL}} · <a href="{{.Status.NotesURL}}" target="_blank" rel="noopener">release notes</a>{{end}}{{else}}no image for this device found yet{{end}}</dd>
+    {{if .Status.Switched}}<dt>Switched</dt><dd>the next start uses slot {{.Status.OtherSlot}}, waiting for the health check</dd>{{end}}
+  </dl>
+  {{with .Status.LastFailure}}<p class="flash err" role="status">⚠ {{.}}</p>{{end}}
+  <form method="post" action="/system/image/check" class="row">
+    <button class="secondary">Check for a new image</button>
+  </form>
+  <p class="muted">The same signed release manifest as the version above, so no extra account or token.</p>
+  {{if .Status.Installable}}
+  <form method="post" action="/system/image/install" class="stack">
+    <label class="check"><input type="checkbox" name="confirm" value="yes" required> Install image {{.Status.Available}} on the other slot and restart</label>
+    <button>Install and restart</button>
+  </form>
+  <p class="muted">The image is written to the slot that is not running and read back before the device switches to it, so a failed download or a card that lies cannot leave it without a system. It restarts when done: reload this page in about {{.ReloadSecs}} seconds, and longer for a large download. Settings, session and WiFi networks are not touched, so the phone stays paired. If the new system does not come up healthy three times, the device goes back to this one by itself.</p>
+  {{end}}
+  {{if .Status.CanRollback}}
+  <form method="post" action="/system/image/rollback" class="stack">
+    <label class="check"><input type="checkbox" name="confirm" value="yes" required> Go back to the image on slot {{.Status.RollbackTo}}</label>
+    <button class="secondary">Back to the previous image</button>
+  </form>
+  <p class="muted">Selects slot {{.Status.RollbackTo}} for the next start and restarts. The settings and the WhatsApp session are on the data partition, which no image update touches, so the device stays paired. Messages that arrived in between are not lost. The device restarts: reload this page in about {{.ReloadSecs}} seconds.</p>
+  {{end}}
+  {{end}}
+</section>
+{{end}}
 <section class="card danger">
   <h2>Factory reset</h2>
   <p>Unlinks WhatsApp and erases every setting, the password and the saved WiFi networks. The device restarts in setup mode. Same as <code>!reset</code>.</p>

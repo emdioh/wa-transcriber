@@ -40,7 +40,27 @@ type Manifest struct {
 	// migrations that an intermediate version has to perform first.
 	MinFrom string           `json:"min_from"`
 	Assets  map[string]Asset `json:"assets"`
+	// Images is the optional board-image block of M10 (D18): one entry per
+	// board, keyed "beagle" and "rpi2". It is absent in every release before
+	// the two-root layout, which is exactly how an old device knows there is
+	// no image to install. The same signature covers it, so a device checks
+	// the whole manifest before looking at an image.
+	Images map[string]Image `json:"images,omitempty"`
 }
+
+// Image is one board image of a release: a whole disk image to write into the
+// inactive root slot, not an executable. Layout is the partition-table version
+// the image needs (0 when the manifest predates the A/B layout).
+type Image struct {
+	File   string `json:"file"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+	Layout int    `json:"layout,omitempty"`
+}
+
+// ImageKeys are the boards an image may be published for. They are not
+// runtime.GOARCH: the same armv7 binary runs on both boards.
+var ImageKeys = []string{"beagle", "rpi2"}
 
 // ErrNoManifest is returned by Checker.Latest when there is no verified
 // manifest yet (no check has succeeded and the cache is empty or stale).
@@ -91,7 +111,46 @@ func ParseManifest(b []byte) (*Manifest, error) {
 			return nil, fmt.Errorf("update: asset %q has size %d", k, a.Size)
 		}
 	}
+	// The images block is optional, but what it says has to be valid: a signed
+	// manifest is accepted or refused as a whole.
+	for _, k := range sortedKeys(m.Images) {
+		img := m.Images[k]
+		if !validKey(k) {
+			return nil, fmt.Errorf("update: manifest image key %q", k)
+		}
+		if img.File == "" || strings.ContainsAny(img.File, "/\\") {
+			return nil, fmt.Errorf("update: image %q has file %q", k, img.File)
+		}
+		if !validSHA(img.SHA256) {
+			return nil, fmt.Errorf("update: image %q has bad sha256 %q", k, img.SHA256)
+		}
+		if img.Size <= 0 {
+			return nil, fmt.Errorf("update: image %q has size %d", k, img.Size)
+		}
+		if img.Layout < 0 {
+			return nil, fmt.Errorf("update: image %q has layout %d", k, img.Layout)
+		}
+	}
 	return &m, nil
+}
+
+// sortedKeys returns the keys of m in order, for deterministic errors.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// Image returns the board image for a key such as "beagle".
+func (m *Manifest) Image(board string) (Image, bool) {
+	if m == nil || board == "" {
+		return Image{}, false
+	}
+	img, ok := m.Images[board]
+	return img, ok
 }
 
 // Asset returns the asset for a platform key such as "linux-armv7".

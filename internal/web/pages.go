@@ -64,6 +64,10 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /system/update/install", s.auth(s.updateInstall))
 	m.HandleFunc("POST /system/update/rollback", s.auth(s.updateRollback))
 	m.HandleFunc("POST /system/update/settings", s.auth(s.updateSettings))
+	// Same rule as the binary card: no ImageUpdater, no route.
+	m.HandleFunc("POST /system/image/check", s.auth(s.imageCheck))
+	m.HandleFunc("POST /system/image/install", s.auth(s.imageInstall))
+	m.HandleFunc("POST /system/image/rollback", s.auth(s.imageRollback))
 }
 
 // -- setup / login ----------------------------------------------------------
@@ -770,15 +774,19 @@ type systemView struct {
 	Language       string
 	// Update is nil when the binary update feature is off: no card at all.
 	Update *updateView
+	// Image is nil when the image update feature is off (M10).
+	Image *imageView
 }
 
 func (s *Server) systemPage(w http.ResponseWriter, r *http.Request) {
 	update, _ := s.updatePageView(r.Context())
+	image, _ := s.imagePageView(r.Context())
 	s.render(w, r, "system", "System", systemView{
 		MinPasswordLen: MinPasswordLen,
 		Languages:      config.Languages,
 		Language:       config.NormalizeLanguage(s.opts.Config.Get().Language),
 		Update:         update,
+		Image:          image,
 	})
 }
 

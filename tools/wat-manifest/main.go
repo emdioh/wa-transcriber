@@ -4,7 +4,8 @@
 //
 // It reads the three cross-built binaries from -dist, hashes them and writes
 // manifest.json with schema, version, release time, notes URL, an optional
-// minimum-source version and one entry per runtime arch. The output is
+// minimum-source version, one entry per runtime arch and, when -images points
+// at them, one entry per board image (M10: beagle.img, rpi2.img). The output is
 // deterministic (fixed key order, indent 2) so re-running it on the same
 // inputs produces byte-identical bytes and a signature stays valid.
 //
@@ -52,7 +53,31 @@ type manifest struct {
 	NotesURL   string           `json:"notes_url"`
 	MinFrom    string           `json:"min_from"`
 	Assets     map[string]entry `json:"assets"`
+	// Images is written last and omitted when there is none, so a release
+	// without board images produces exactly the bytes an older wat-manifest
+	// did (a signature stays valid across a rebuild).
+	Images map[string]imageEntry `json:"images,omitempty"`
 }
+
+// imageEntry is one board image: the file, its hash and size, and the
+// partition-table version a device needs to install it (2 = p1 boot, p2 root
+// A, p3 root B, p4 data).
+type imageEntry struct {
+	File   string `json:"file"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+	Layout int    `json:"layout,omitempty"`
+}
+
+// images maps a board key to the file name inside -images. The keys are the
+// boards, not architectures: the same armv7 binary runs on both.
+var images = []struct{ key, file string }{
+	{"beagle", "beagle.img"},
+	{"rpi2", "rpi2.img"},
+}
+
+// layoutVersion is the partition table the images in this release have.
+const layoutVersion = 2
 
 type entry struct {
 	File   string `json:"file"`
@@ -66,8 +91,9 @@ func main() {
 	out := flag.String("out", "", "output manifest path (default <dist>/manifest.json)")
 	minFrom := flag.String("min-from", "", "oldest version allowed to update (empty = no constraint)")
 	notesURL := flag.String("notes-url", "", "release notes URL (default the GitHub tag page for -version)")
+	imagesDir := flag.String("images", "", "directory holding beagle.img and rpi2.img (empty: no images in the manifest, as in releases before M10)")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: wat-manifest -version v0.2.0 [-dist dist] [-out dist/manifest.json]\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "usage: wat-manifest -version v0.2.0 [-dist dist] [-images dir] [-out dist/manifest.json]\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -77,13 +103,13 @@ func main() {
 		outPath = filepath.Join(*dist, "manifest.json")
 	}
 
-	if err := run(*dist, *version, *minFrom, *notesURL, outPath); err != nil {
+	if err := run(*dist, *version, *minFrom, *notesURL, *imagesDir, outPath); err != nil {
 		fmt.Fprintf(os.Stderr, "wat-manifest: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(dist, version, minFrom, notesURL, outPath string) error {
+func run(dist, version, minFrom, notesURL, imagesDir, outPath string) error {
 	if version == "" {
 		return errors.New("-version is required")
 	}
@@ -112,6 +138,26 @@ func run(dist, version, minFrom, notesURL, outPath string) error {
 			return err
 		}
 		m.Assets[a.key] = entry{File: a.file, SHA256: sum, Size: size}
+	}
+
+	if imagesDir != "" {
+		m.Images = make(map[string]imageEntry, len(images))
+		for _, img := range images {
+			path := filepath.Join(imagesDir, img.file)
+			sum, size, err := hashFile(path)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					// An older release, or a build that did not make the
+					// board images: not an error, just no images block.
+					continue
+				}
+				return err
+			}
+			m.Images[img.key] = imageEntry{File: img.file, SHA256: sum, Size: size, Layout: layoutVersion}
+		}
+		if len(m.Images) == 0 {
+			m.Images = nil
+		}
 	}
 
 	var buf bytes.Buffer

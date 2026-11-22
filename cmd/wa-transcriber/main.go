@@ -68,6 +68,10 @@ func run() error {
 	updateURL := flag.String("update-url",
 		envOr("WAT_UPDATE_URL", "https://github.com/emdioh/wa-transcriber/releases/latest/download/manifest.json"),
 		"release manifest URL (env WAT_UPDATE_URL; a test server can serve one on a board)")
+	imageUpdate := flag.String("image-update", os.Getenv("WAT_IMAGE_UPDATE"),
+		"data directory for image (OS) updates into the inactive root slot, empty to disable (env WAT_IMAGE_UPDATE; the image passes /data)")
+	imageLayoutFile := flag.String("image-layout", envOr("WAT_IMAGE_LAYOUT", defaultImageLayout),
+		"board description of the A/B layout: boot file and root partitions (env WAT_IMAGE_LAYOUT; the image ships /etc/wat/image.json)")
 	bootstrap := flag.String("bootstrap", os.Getenv("WAT_BOOTSTRAP"),
 		"binary restart() re-execs: the factory binary that runs the boot gate, empty for this executable (env WAT_BOOTSTRAP)")
 	flag.Parse()
@@ -102,6 +106,28 @@ func run() error {
 		SelfPath:  executable(),
 		Version:   version,
 	}, key)
+
+	// The second half of the boot gate: an image update counts the starts of
+	// the slot it switched to and falls back to the other one after three
+	// unconfirmed starts. Same place as update.Boot, for the same reason; it
+	// never stops the process.
+	imgReq := imageRequest{
+		Dir:      *imageUpdate,
+		Layout:   *imageLayoutFile,
+		SysBlock: defaultSysBlock,
+		DevDir:   defaultDevDir,
+	}
+	imgAct := imageBoot(imgReq, log, time.Now())
+	if imgAct.Note != "" && imgAct.Note != "off" {
+		log.Info("imageupdate: boot decision", "decision", imgAct.Note)
+	}
+	if imgAct.Reboot {
+		// The boot file names the good slot again; only a reboot reaches it.
+		log.Warn("imageupdate: rebooting into the previous slot")
+		if err := restart(log, *bootstrap); err != nil {
+			log.Error("imageupdate: reboot into the previous slot failed", "err", err)
+		}
+	}
 
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
 		return err
@@ -217,11 +243,23 @@ func run() error {
 	if svc != nil {
 		log.Info("binary updates enabled", "dir", *updateDir, "url", *updateURL)
 	}
+	// The image update shares the manifest and the key with the binary
+	// update and nothing else: it writes a partition, not a file. nil when
+	// -image-update is empty; a device whose layout has one root still gets
+	// a service, because the card has to say "reflash once".
+	imgSvc := newImageService(imgReq, version, *updateURL, key, tr.Busy, log)
+	if imgSvc != nil {
+		log.Info("image updates enabled", "data", *imageUpdate, "layout", *imageLayoutFile)
+	}
 
 	if *listen != "" {
 		var updater web.Updater
 		if svc != nil {
 			updater = svc
+		}
+		var imageUpdater web.ImageUpdater
+		if imgSvc != nil {
+			imageUpdater = imgSvc
 		}
 		ui := web.New(web.Options{
 			Config:         cfg,
@@ -238,6 +276,7 @@ func run() error {
 			NetworkManaged: *networkMode == "managed",
 			InAPMode:       nm.InAPMode,
 			Updater:        updater,
+			ImageUpdater:   imageUpdater,
 			Restart: func() {
 				if err := restart(log, *bootstrap); err != nil {
 					log.Error("restart after the update failed", "err", err)
