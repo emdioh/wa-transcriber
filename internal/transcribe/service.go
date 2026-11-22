@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 
@@ -63,7 +64,16 @@ type Service struct {
 	Getenv   func(string) string // nil: os.Getenv
 	queue    chan struct{}       // MaxWaiting+1 slots
 	running  chan struct{}       // 1 slot
+	// inFlight counts notes queued or running. It is not len(queue): a job
+	// leaves the queue channel only after it holds a running slot, so the
+	// count would briefly drop to zero between the two.
+	inFlight atomic.Int32
 }
+
+// Busy reports whether a voice note is queued or being transcribed. The
+// binary update uses it to stay out of the way: a restart would kill the
+// reply of a note that is already accepted.
+func (s *Service) Busy() bool { return s.inFlight.Load() > 0 }
 
 // New returns a ready Service.
 func New(cfg *config.Store, dl Downloader, log *slog.Logger) *Service {
@@ -117,7 +127,11 @@ func (s *Service) Transcribe(ctx context.Context, v bot.Voice) (string, error) {
 	default:
 		return "", ErrBusy
 	}
-	defer func() { <-s.queue }()
+	s.inFlight.Add(1)
+	defer func() {
+		s.inFlight.Add(-1)
+		<-s.queue
+	}()
 	select {
 	case s.running <- struct{}{}:
 	case <-ctx.Done():

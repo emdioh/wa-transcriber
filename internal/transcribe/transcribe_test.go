@@ -278,6 +278,43 @@ func TestQueueIsBounded(t *testing.T) {
 	wg.Wait()
 }
 
+func TestBusy(t *testing.T) {
+	api := &fakeAPI{t: t, transcript: "x"}
+	s := newService(t, api, config.Transcription{Provider: OpenAI})
+	if s.Busy() {
+		t.Fatal("a fresh service is busy")
+	}
+	dl := blockingDL{release: make(chan struct{})}
+	s.Download = dl
+	done := make(chan error, 1)
+	go func() { _, err := s.Transcribe(context.Background(), voice()); done <- err }()
+	// The note is accepted as soon as the queue slot is taken, before it
+	// starts downloading.
+	deadline := time.Now().Add(2 * time.Second)
+	for !s.Busy() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !s.Busy() {
+		t.Fatal("a queued note does not count as busy")
+	}
+	close(dl.release)
+	if err := <-done; err != nil {
+		t.Fatalf("transcribe: %v", err)
+	}
+	if s.Busy() {
+		t.Fatal("still busy after the note was transcribed")
+	}
+	// A refused job must not leave the counter behind.
+	big := voice()
+	big.Audio.FileLength = proto.Uint64(MaxAudioBytes + 1)
+	if _, err := s.Transcribe(context.Background(), big); err == nil {
+		t.Fatal("oversized note accepted")
+	}
+	if s.Busy() {
+		t.Fatal("a refused note leaves the service busy")
+	}
+}
+
 func TestResolveEnvAndDefaults(t *testing.T) {
 	env := map[string]string{"WAT_PROVIDER": "Gemini", "WAT_API_KEY": "k", "WAT_KEEP_LANGUAGES": "Italian, en-US"}
 	s := Resolve(config.Transcription{Provider: OpenAI, APIKey: "cfg", TranslateTo: "IT"},

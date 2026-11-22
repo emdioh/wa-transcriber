@@ -36,6 +36,8 @@ import (
 // version and buildTime are set at build time with
 // -ldflags "-X main.version=... -X main.buildTime=...". buildTime guards
 // against a device clock that is not set yet (a bad clock breaks WhatsApp).
+// updatePubKey (in update.go) is the base64 ed25519 public key of the release
+// manifest; empty compiles self-updates out.
 var (
 	version   = "dev"
 	buildTime string
@@ -61,6 +63,13 @@ func run() error {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	healthcheckOnly := flag.Bool("healthcheck", false,
 		"probe the local web UI on -listen and exit 0 when healthy, 1 otherwise (for Docker HEALTHCHECK)")
+	updateDir := flag.String("update-dir", os.Getenv("WAT_UPDATE_DIR"),
+		"binary update directory, empty to disable self-updates (env WAT_UPDATE_DIR; the image passes /data/bin)")
+	updateURL := flag.String("update-url",
+		envOr("WAT_UPDATE_URL", "https://github.com/emdioh/wa-transcriber/releases/latest/download/manifest.json"),
+		"release manifest URL (env WAT_UPDATE_URL; a test server can serve one on a board)")
+	bootstrap := flag.String("bootstrap", os.Getenv("WAT_BOOTSTRAP"),
+		"binary restart() re-execs: the factory binary that runs the boot gate, empty for this executable (env WAT_BOOTSTRAP)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -80,7 +89,19 @@ func run() error {
 	log := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
 	log.Info("starting", "version", version, "data", *dataDir, "listen", *listen,
-		"mem_total_mb", memTotal>>20, "mem_limit_mb", memoryLimitMB())
+		"mem_total_mb", memTotal>>20, "mem_limit_mb", memoryLimitMB(),
+		"update_dir", *updateDir)
+
+	// The boot gate runs before the data dir, the config and WhatsApp, exactly
+	// as the kernel started it (D17). -version and -healthcheck returned above:
+	// they must never exec anything. A failed exec only logs: the binary that is
+	// running keeps running.
+	key := resolveUpdateKey(log, updatePubKey)
+	bootstrapStep(log, bootstrapRequest{
+		UpdateDir: *updateDir,
+		SelfPath:  executable(),
+		Version:   version,
+	}, key)
 
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
 		return err
@@ -172,23 +193,36 @@ func run() error {
 		if err := nm.Erase(); err != nil {
 			log.Error("erasing network settings", "err", err)
 		}
-		return restart(log)
+		return restart(log, *bootstrap)
 	}
 	unlink := func(ctx context.Context) error {
 		client.Logout(ctx)
-		return restart(log)
+		return restart(log, *bootstrap)
 	}
 	client.OnMessage = func(m *bot.Message) { b.Handle(ctx, m) }
 	client.OnLoggedOut = func() {
 		// Unlinked from the phone: drop the session, keep the settings, pair again.
 		client.Logout(ctx)
-		if err := restart(log); err != nil {
+		if err := restart(log, *bootstrap); err != nil {
 			log.Error("restart after logout failed", "err", err)
 			stop()
 		}
 	}
 
+	// One update service for the whole process: the web card and the daily
+	// check share its manifest cache, so a background check that finds a
+	// release is the same answer the card shows. nil when the feature is off.
+	svc := newUpdateService(*updateDir, version, *updateURL,
+		filepath.Join(*dataDir, "updates", "check.json"), key, tr.Busy, log)
+	if svc != nil {
+		log.Info("binary updates enabled", "dir", *updateDir, "url", *updateURL)
+	}
+
 	if *listen != "" {
+		var updater web.Updater
+		if svc != nil {
+			updater = svc
+		}
 		ui := web.New(web.Options{
 			Config:         cfg,
 			Status:         st,
@@ -203,6 +237,12 @@ func run() error {
 			Network:        nm,
 			NetworkManaged: *networkMode == "managed",
 			InAPMode:       nm.InAPMode,
+			Updater:        updater,
+			Restart: func() {
+				if err := restart(log, *bootstrap); err != nil {
+					log.Error("restart after the update failed", "err", err)
+				}
+			},
 		})
 		go func() {
 			log.Info("web UI listening", "addr", *listen)
@@ -249,21 +289,51 @@ func run() error {
 		}
 	}()
 
+	// The update loop: the health timer 60 s after start, then the opt-in daily
+	// check (never fatal, never while a note is queued or the setup AP runs).
+	var check *dailyCheck
+	if svc != nil {
+		check = &dailyCheck{
+			svc:     svc,
+			log:     log,
+			cfg:     updateSettingsAdapter{cfg},
+			busy:    tr.Busy,
+			inAP:    nm.InAPMode,
+			now:     time.Now,
+			first:   updateFirstCheck,
+			every:   updateInterval,
+			restart: func() { logAutoRestart(log, *bootstrap) },
+		}
+	}
+	startUpdateRuntime(ctx, log, *updateDir, check)
+
 	<-ctx.Done()
 	log.Info("shutting down")
 	client.Close()
 	return nil
 }
 
-// restart re-executes the binary so it starts from a clean state (setup
-// mode after a reset). Works the same on the image and in Docker.
-func restart(log *slog.Logger) error {
-	exe, err := os.Executable()
+// restart re-executes the bootstrap binary so it starts from a clean state
+// (setup mode after a reset, or the boot gate promoting a pending version).
+// Works the same on the image and in Docker. It must never exec
+// os.Executable() of an updated binary: that would skip the gate.
+func restart(log *slog.Logger, bootstrap string) error {
+	exe, err := bootstrapPath(bootstrap)
 	if err != nil {
 		return err
 	}
-	log.Warn("restarting")
-	return syscall.Exec(exe, os.Args, os.Environ())
+	log.Warn("restarting", "path", exe)
+	return execFunc(exe, os.Args, os.Environ())
+}
+
+// logAutoRestart is the restart of an automatic install: a goroutine, like the
+// web UI's, so no caller holds a lock while the process is replaced.
+func logAutoRestart(log *slog.Logger, bootstrap string) {
+	go func() {
+		if err := restart(log, bootstrap); err != nil {
+			log.Error("restart after the automatic update failed", "err", err)
+		}
+	}()
 }
 
 // setMemoryLimit applies a soft Go heap limit of a quarter of RAM, clamped to
@@ -289,6 +359,24 @@ func listenPort(addr string) string {
 		return port
 	}
 	return "80"
+}
+
+// updateSettingsAdapter gives the daily check the config store's effective
+// settings without making the check depend on the whole store.
+type updateSettingsAdapter struct{ cfg *config.Store }
+
+func (a updateSettingsAdapter) UpdateSettings() (checkMode string, auto bool) {
+	return a.cfg.Get().UpdateSettings(os.Getenv)
+}
+
+// executable is os.Executable() without the error: a path that cannot be
+// resolved only means the boot gate cannot tell factory from /data.
+func executable() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return exe
 }
 
 // coordAdapter exposes the coordinator to the bot without making bot depend

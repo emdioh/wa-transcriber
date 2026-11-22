@@ -20,7 +20,12 @@ null::sysinit:/bin/ln -sf /proc/self/fd/2 /dev/stderr
 ::sysinit:/etc/init.d/rcS
 
 # The transcriber: one process, restarted when it exits.
-::respawn:/usr/bin/wa-transcriber -data /data -network managed -listen :80 -watchdog /dev/watchdog
+#
+# -update-dir /data/bin turns on binary self-updates (D17): this factory
+# binary verifies the signed release and execs the version on /data before it
+# does anything else. -bootstrap is what a restart re-execs, so /data/bin
+# always goes through this gate instead of skipping it.
+::respawn:/usr/bin/wa-transcriber -data /data -network managed -listen :80 -watchdog /dev/watchdog -update-dir /data/bin -bootstrap /usr/bin/wa-transcriber
 
 # Debug shell: prefer the console= line in wat.txt (S02console), which also
 # covers the USB gadget and HDMI. This manual line is a last resort.

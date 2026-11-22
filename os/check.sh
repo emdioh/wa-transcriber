@@ -107,6 +107,13 @@ for s in "$OVL"/etc/init.d/S*; do
 done
 grep -q 'wa-transcriber -data /data -network managed -listen :80' "$OVL/etc/inittab" ||
 	fail "inittab does not respawn the transcriber in managed mode"
+# Binary self-updates (D17): init starts the factory binary, and that same
+# binary has to run the boot gate on every restart. Without both flags the
+# image either never updates or restarts straight into /data/bin.
+grep -q 'wa-transcriber -data /data .*-update-dir /data/bin' "$OVL/etc/inittab" ||
+	fail "inittab does not pass -update-dir /data/bin (binary self-updates are off)"
+grep -q 'wa-transcriber -data /data .*-bootstrap /usr/bin/wa-transcriber' "$OVL/etc/inittab" ||
+	fail "inittab does not pass -bootstrap /usr/bin/wa-transcriber (a restart would skip the boot gate)"
 grep -q 'sysinit:/etc/init.d/rcS' "$OVL/etc/inittab" ||
 	fail "inittab does not run rcS"
 grep -q '^LABEL=DATA' "$OVL/etc/fstab" || fail "fstab does not mount the DATA partition"

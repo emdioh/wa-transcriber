@@ -125,6 +125,14 @@ func (c Config) UpdateAutoOn(getenv func(string) string) bool {
 	return c.UpdateAuto
 }
 
+// UpdateSettings returns both effective update settings at once, as the web UI
+// and the daily check read them: the form fields are one form, and the daily
+// check must see a change made in it on its next tick (WAT_UPDATE_CHECK and
+// WAT_UPDATE_AUTO still win over config.json).
+func (c Config) UpdateSettings(getenv func(string) string) (checkMode string, auto bool) {
+	return c.UpdateCheckMode(getenv), c.UpdateAutoOn(getenv)
+}
+
 // EnvOverrides returns field -> variable name for the update fields
 // currently set by the environment (the web UI shows them read-only).
 func EnvOverrides(getenv func(string) string) map[string]string {

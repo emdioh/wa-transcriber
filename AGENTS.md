@@ -37,8 +37,9 @@ Remaining work (details and exit criteria in [docs/PLAN.md](docs/PLAN.md)):
    the ghcr package public (needs `admin:packages`, not available to agents).
 5. **M3b**: turn claims on by default only after the M2 decision.
 6. Nice-to-have: read the Italian replies in a real chat.
-7. **M9** binary updates from GitHub releases (D17): the code and its tests
-   need no hardware; the field test on both boards is the owner's.
+7. **M9** binary updates from GitHub releases (D17): the code is in; what is
+   left is the signing keypair (wat-t3l.5), the field test on both boards
+   (wat-t3l.6) and the `!update` command (wat-t3l.7).
 
 A rootless Podman container from the verification run may still be around
 (`podman ps -a`, container `wat`, volume `wat-data`); it is disposable. It
