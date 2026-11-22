@@ -80,7 +80,8 @@ func (s *Server) imagePageView(ctx context.Context) (*imageView, bool) {
 	return &imageView{Status: st, Size: sizeText(st.ImageSize), ReloadSecs: updateReloadSeconds}, true
 }
 
-// sizeText renders a byte count the way the card does: "184 MB", "" for zero.
+// sizeText renders a byte count the way the cards do: "184 MB", "" for zero.
+// The internal storage card uses it too, so both sizes read the same.
 func sizeText(n int64) string {
 	if n <= 0 {
 		return ""

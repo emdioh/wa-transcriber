@@ -72,6 +72,11 @@ func run() error {
 		"data directory for image (OS) updates into the inactive root slot, empty to disable (env WAT_IMAGE_UPDATE; the image passes /data)")
 	imageLayoutFile := flag.String("image-layout", envOr("WAT_IMAGE_LAYOUT", defaultImageLayout),
 		"board description of the A/B layout: boot file and root partitions (env WAT_IMAGE_LAYOUT; the image ships /etc/wat/image.json)")
+	flashDev := flag.String("flash", "",
+		"install this card onto the board's internal storage (a device, empty = off) and exit instead of starting")
+	flashConfirm := flag.String("flash-confirm", "",
+		"the device name, to confirm -flash (an accidental -flash must not write a disk)")
+	flashBoot := flag.String("flash-boot", "/boot", "boot partition for the migration marker of -flash")
 	bootstrap := flag.String("bootstrap", os.Getenv("WAT_BOOTSTRAP"),
 		"binary restart() re-execs: the factory binary that runs the boot gate, empty for this executable (env WAT_BOOTSTRAP)")
 	flag.Parse()
@@ -81,6 +86,16 @@ func run() error {
 	}
 	if *healthcheckOnly {
 		return healthcheck(*listen, nil)
+	}
+	if *flashDev != "" {
+		// The install runs before the config, WhatsApp and the web UI: it
+		// writes another disk and the device is about to be powered off, so
+		// nothing else may be running and holding /data.
+		if err := runFlashCmd(*flashDev, *flashConfirm, *flashBoot, *dataDir, *imageLayoutFile); err != nil {
+			fmt.Fprintln(os.Stderr, "wa-transcriber:", err)
+			os.Exit(1)
+		}
+		return nil
 	}
 
 	memTotal := logbuf.MemTotal()
@@ -261,6 +276,15 @@ func run() error {
 		if imgSvc != nil {
 			imageUpdater = imgSvc
 		}
+		var flashInstaller web.FlashInstaller
+		if flSvc := newFlashService(imgReq, flashPaths{
+			SysBlock: defaultSysBlock,
+			DevDir:   defaultDevDir,
+			BootDir:  "/boot",
+			Mounts:   "/proc/self/mounts",
+		}, log); flSvc != nil {
+			flashInstaller = flSvc
+		}
 		ui := web.New(web.Options{
 			Config:         cfg,
 			Status:         st,
@@ -277,6 +301,7 @@ func run() error {
 			InAPMode:       nm.InAPMode,
 			Updater:        updater,
 			ImageUpdater:   imageUpdater,
+			FlashInstaller: flashInstaller,
 			Restart: func() {
 				if err := restart(log, *bootstrap); err != nil {
 					log.Error("restart after the update failed", "err", err)

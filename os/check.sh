@@ -170,6 +170,26 @@ grep -q 'wat_part "\$disk" 3' "$OVL/etc/init.d/S01data" ||
 fail "S01data must know the two root slots (p2, p3) to stay off them"
 grep -q -- '--nr 4' "$OVL/etc/init.d/S01data" ||
 fail "S01data must hand partition 4 to the kernel (partx -a --nr 4)"
+# Install to the internal storage (M11): the eMMC clone carries /boot/wat-migrate
+# and the first start from it copies /data across. Without the marker read and
+# both its parts (from, file) the device comes up on the internal storage
+# unpaired, and without the read-only mount the old DATA could be written.
+grep -q 'migrate_from_marker' "$OVL/etc/init.d/S01data" ||
+fail "S01data does not run the /data migration (migrate_from_marker)"
+grep -q 's/^from //p' "$OVL/etc/init.d/S01data" ||
+fail "S01data does not read the source partition from the migration marker"
+grep -q 's/^file //p' "$OVL/etc/init.d/S01data" ||
+fail "S01data does not read the file list from the migration marker"
+grep -q 'mount -t ext4 -o ro,nodev,nosuid' "$OVL/etc/init.d/S01data" ||
+fail "S01data must mount the old DATA read-only for the migration"
+grep -q '/boot/wat-migrate' "$OVL/etc/init.d/S01data" ||
+fail "S01data does not look for /boot/wat-migrate"
+# The migration has to run after DATA is mounted at /data, or it copies into
+# nothing.
+a=$(grep -n 'DATA mounted from \$datadev' "$OVL/etc/init.d/S01data" | head -n 1 | cut -d: -f1)
+b=$(grep -n '^migrate_from_marker$' "$OVL/etc/init.d/S01data" | tail -n 1 | cut -d: -f1)
+[ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] ||
+fail "S01data must mount DATA before migrating it"
 # The boot partition carries wat.txt: without the mount the binary silently
 # falls back to its defaults.
 grep -q 'mount .*\-t vfat .* /boot' "$OVL/etc/init.d/S00boot" ||

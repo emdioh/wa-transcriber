@@ -91,6 +91,10 @@ type Options struct {
 	// completely, and an updater whose status has a LayoutError shows the
 	// "reflash once" line instead of the buttons.
 	ImageUpdater ImageUpdater
+	// FlashInstaller drives the "Internal storage" card (M11); nil hides it,
+	// and an installer whose status has an Error shows that one line (a board
+	// without internal flash says so) instead of the button.
+	FlashInstaller FlashInstaller
 	// Restart re-execs the process after an install or a rollback (main logs
 	// its own failure).
 	Restart func()

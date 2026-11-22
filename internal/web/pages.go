@@ -68,6 +68,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /system/image/check", s.auth(s.imageCheck))
 	m.HandleFunc("POST /system/image/install", s.auth(s.imageInstall))
 	m.HandleFunc("POST /system/image/rollback", s.auth(s.imageRollback))
+	// And no FlashInstaller, no route for the internal storage.
+	m.HandleFunc("POST /system/flash/install", s.auth(s.flashInstall))
 }
 
 // -- setup / login ----------------------------------------------------------
@@ -776,17 +778,21 @@ type systemView struct {
 	Update *updateView
 	// Image is nil when the image update feature is off (M10).
 	Image *imageView
+	// Flash is nil when the internal storage feature is off (M11).
+	Flash *flashView
 }
 
 func (s *Server) systemPage(w http.ResponseWriter, r *http.Request) {
 	update, _ := s.updatePageView(r.Context())
 	image, _ := s.imagePageView(r.Context())
+	flash, _ := s.flashPageView(r.Context())
 	s.render(w, r, "system", "System", systemView{
 		MinPasswordLen: MinPasswordLen,
 		Languages:      config.Languages,
 		Language:       config.NormalizeLanguage(s.opts.Config.Get().Language),
 		Update:         update,
 		Image:          image,
+		Flash:          flash,
 	})
 }
 
