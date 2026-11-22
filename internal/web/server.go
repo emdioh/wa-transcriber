@@ -131,6 +131,9 @@ func parsePages() map[string]*template.Template {
 	pages := map[string]*template.Template{}
 	entries, err := fs.Glob(templateFS, "templates/*.html")
 	if err != nil {
+		// The templates are embedded at build time: a bad pattern here is a
+		// programming error that shows up on the first start of a build,
+		// never at run time. Failing loudly is the useful outcome.
 		panic(err)
 	}
 	for _, e := range entries {
@@ -283,6 +286,8 @@ func (s *Server) startSession(w http.ResponseWriter, hash string) {
 	}
 	s.sessions[token] = session{expires: now.Add(sessionTTL), pwHash: hash}
 	s.mu.Unlock()
+	// HttpOnly + SameSite strict; no Secure on purpose: the UI is plain HTTP on
+	// a home LAN (D15), and a Secure cookie would never be sent.
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: token, Path: "/", MaxAge: int(sessionTTL.Seconds()),
 		HttpOnly: true, SameSite: http.SameSiteStrictMode,

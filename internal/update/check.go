@@ -267,7 +267,7 @@ func (c *Checker) writeCache(e cachedManifest) {
 	if err != nil {
 		return
 	}
-	defer os.Remove(tmp.Name())
+	defer removeQuiet(tmp.Name())
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
 		return

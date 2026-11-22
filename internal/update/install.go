@@ -85,7 +85,7 @@ func (i *Installer) Fetch(ctx context.Context, url string, m *Manifest, assetKey
 	// A superseded download from an earlier run is useless: drop it first.
 	if parts, err := filepath.Glob(filepath.Join(upd, "*.part")); err == nil {
 		for _, p := range parts {
-			_ = os.Remove(p)
+			removeQuiet(p)
 		}
 	}
 
@@ -93,30 +93,30 @@ func (i *Installer) Fetch(ctx context.Context, url string, m *Manifest, assetKey
 	if part, err := i.download(ctx, url, asset, part); err != nil {
 		return zero, err
 	} else if err := CheckExecutable(part, assetKey); err != nil {
-		_ = os.Remove(part)
+		removeQuiet(part)
 		return zero, err
 	}
 
 	final := BinaryName(i.Dir, m.Version)
 	if err := moveFile(part, final); err != nil {
-		_ = os.Remove(part)
+		removeQuiet(part)
 		return zero, err
 	}
 
 	st, err := LoadState(i.Dir)
 	if err != nil {
-		_ = os.Remove(final)
+		removeQuiet(final)
 		return zero, err
 	}
 	if st.Pending != nil && st.Pending.File != final {
-		_ = os.Remove(st.Pending.File)
+		removeQuiet(st.Pending.File)
 	}
 	slot := Slot{Version: m.Version, File: final, SHA256: asset.SHA256}
 	st.Pending = &slot
 	// A new pending version restarts the health gate for it, but the active
 	// version keeps whatever it had.
 	if err := SaveState(i.Dir, st); err != nil {
-		_ = os.Remove(final)
+		removeQuiet(final)
 		return zero, err
 	}
 	return slot, nil
@@ -136,11 +136,11 @@ func (i *Installer) download(ctx context.Context, url string, asset Asset, part 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		_ = os.Remove(part)
+		removeQuiet(part)
 		return "", fmt.Errorf("update: download %s: HTTP %s", asset.File, resp.Status)
 	}
 	if resp.ContentLength > limit {
-		_ = os.Remove(part)
+		removeQuiet(part)
 		return "", fmt.Errorf("update: %s is %d bytes, expected %d", asset.File, resp.ContentLength, asset.Size)
 	}
 
@@ -150,7 +150,7 @@ func (i *Installer) download(ctx context.Context, url string, asset Asset, part 
 	}
 	fail := func(err error) (string, error) {
 		f.Close()
-		_ = os.Remove(part)
+		removeQuiet(part)
 		return "", err
 	}
 	h := sha256.New()
@@ -176,7 +176,7 @@ func (i *Installer) download(ctx context.Context, url string, asset Asset, part 
 		return fail(fmt.Errorf("update: fsync %s: %w", filepath.Base(part), err))
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(part)
+		removeQuiet(part)
 		return "", fmt.Errorf("update: close %s: %w", filepath.Base(part), err)
 	}
 	return part, nil

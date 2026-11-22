@@ -318,6 +318,9 @@ func (s *Server) restartPage(w http.ResponseWriter, r *http.Request, title, next
 	}
 	go func() {
 		time.Sleep(500 * time.Millisecond)
+		// Not r.Context(): this runs after the response, and the request
+		// context is cancelled the moment the handler returns, which would
+		// abort the logout and the re-exec before they happen.
 		if err := fn(context.Background()); err != nil {
 			s.opts.Log.Error(title+" failed", "err", err)
 		}

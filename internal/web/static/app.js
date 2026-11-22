@@ -1,8 +1,26 @@
 "use strict";
 (function () {
+  // localPath keeps a redirect on this device: only a plain absolute path is
+  // used, never another host ("//evil.example"), a scheme ("javascript:") or a
+  // backslash trick. The template writes data-next itself, but the page must
+  // not become a redirector if that ever changes.
+  var localPath = function (v) {
+    if (typeof v !== "string" || v.charAt(0) !== "/") return "/";
+    if (v.charAt(1) === "/" || v.includes("\\")) return "/";
+    return v;
+  };
+
+  // go navigates once the device answers again. replace() is deliberate: the
+  // "Restarting…" page must not stay in the history, or Back lands on a dead
+  // connection.
+  var go = function (target) {
+    location.replace(localPath(target));
+  };
+
   // WhatsApp page: follow QR rotation, pairing and connection changes.
-  var p = document.getElementById("pairing");
-  if (p) {
+  var initPairing = function () {
+    var p = document.querySelector("#pairing");
+    if (!p) return;
     setInterval(function () {
       fetch("/api/status", { cache: "no-store" })
         .then(function (r) { return r.ok ? r.json() : null; })
@@ -13,16 +31,17 @@
         })
         .catch(function () {});
     }, 3000);
-  }
+  };
 
   // Logs page: start at the bottom, optional auto-refresh by polling the
   // server (a full reload is invisible when nothing changed).
-  var log = document.getElementById("log");
-  if (log) {
+  var initLogs = function () {
+    var log = document.querySelector("#log");
+    if (!log) return;
     log.scrollTop = log.scrollHeight;
-    var box = document.getElementById("autorefresh");
-    var stamp = document.getElementById("logstamp");
-    var count = document.getElementById("logcount");
+    var box = document.querySelector("#autorefresh");
+    var stamp = document.querySelector("#logstamp");
+    var count = document.querySelector("#logcount");
     var key = "wat-autorefresh";
     var timer = null;
     var stampText = function () {
@@ -62,16 +81,21 @@
       refresh();
       timer = setInterval(refresh, 5000);
     }
-  }
+  };
 
   // Restart page: wait for the device to come back.
-  var rs = document.getElementById("restart");
-  if (rs) {
-    var next = rs.dataset.next || "/";
+  var initRestart = function () {
+    var rs = document.querySelector("#restart");
+    if (!rs) return;
+    var next = rs.dataset.next;
     setTimeout(function poll() {
       fetch("/login", { cache: "no-store", redirect: "manual" })
-        .then(function () { location.href = next; })
+        .then(function () { go(next); })
         .catch(function () { setTimeout(poll, 2000); });
     }, 3000);
-  }
+  };
+
+  initPairing();
+  initLogs();
+  initRestart();
 })();

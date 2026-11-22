@@ -93,7 +93,7 @@ func Restore(dataDir, version string) error {
 		if name == "session.db" {
 			for _, sidecar := range []string{"session.db-wal", "session.db-shm"} {
 				if _, err := os.Stat(filepath.Join(src, sidecar)); isNotExist(err) {
-					_ = os.Remove(filepath.Join(dataDir, sidecar))
+					removeQuiet(filepath.Join(dataDir, sidecar))
 				}
 			}
 		}
@@ -139,7 +139,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("update: create temp copy: %w", err)
 	}
-	defer os.Remove(tmp.Name())
+	defer removeQuiet(tmp.Name())
 	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		return fmt.Errorf("update: chmod temp copy: %w", err)

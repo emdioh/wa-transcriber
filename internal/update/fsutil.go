@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 )
 
@@ -32,6 +33,20 @@ func fileSHA(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// removeQuiet deletes a file whose absence is as good as its deletion: a temp
+// file, a superseded slot, junk pruned at boot. It has no error to report
+// because every caller is already on a failure path or will prune the same
+// file on the next boot; a real problem (a read-only /data) shows up where it
+// matters, on the write that failed. It is visible at debug level anyway.
+func removeQuiet(path string) {
+	if path == "" {
+		return
+	}
+	if err := os.Remove(path); err != nil && !isNotExist(err) {
+		slog.Debug("update: cannot remove a stale file", "path", path, "err", err)
+	}
 }
 
 // slotMatches reports whether the file of s exists and has the recorded

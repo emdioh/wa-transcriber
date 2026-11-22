@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,22 +80,26 @@ func LoadState(dir string) (*State, error) {
 	if err := json.Unmarshal(b, &loaded); err != nil {
 		// Bad JSON, empty file after a power cut, or a schema from the
 		// future: keep it for diagnosis, start empty.
-		bad := p + ".bad"
-		_ = os.Remove(bad)
-		if rerr := os.Rename(p, bad); rerr != nil {
-			return st, fmt.Errorf("update: %s is unreadable (%v) and cannot be moved aside: %w", StateFile, err, rerr)
-		}
-		return st, nil
+		return st, setAside(p, fmt.Sprintf("%s is unreadable (%v)", StateFile, err))
 	}
 	if loaded.Schema != 0 && loaded.Schema != 1 {
-		bad := p + ".bad"
-		_ = os.Remove(bad)
-		_ = os.Rename(p, bad)
-		return st, nil
+		return st, setAside(p, fmt.Sprintf("%s has schema %d", StateFile, loaded.Schema))
 	}
 	loaded.Schema = 1
 	loaded.sanitize(dir)
 	return &loaded, nil
+}
+
+// setAside moves a state file we cannot use out of the way, so the next boot
+// starts clean and the file stays for diagnosis. A failure to move it is worth
+// an error: the same unusable file would come back on every boot.
+func setAside(path, why string) error {
+	bad := path + ".bad"
+	removeQuiet(bad)
+	if err := os.Rename(path, bad); err != nil {
+		return fmt.Errorf("update: %s and cannot be moved aside: %w", why, err)
+	}
+	return nil
 }
 
 // sanitize repairs what a hand-edited or half-written state could contain:
@@ -156,7 +161,7 @@ func SaveState(dir string, st *State) error {
 	if err != nil {
 		return fmt.Errorf("update: create temp state: %w", err)
 	}
-	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	defer removeQuiet(tmp.Name()) // no-op after a successful rename
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
 		return fmt.Errorf("update: chmod temp state: %w", err)
@@ -183,7 +188,9 @@ func SaveState(dir string, st *State) error {
 // Best effort: not every filesystem supports it.
 func syncDir(dir string) {
 	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
+		if err := d.Sync(); err != nil {
+			slog.Debug("update: cannot fsync a directory", "dir", dir, "err", err)
+		}
 		d.Close()
 	}
 }
@@ -277,9 +284,8 @@ func Boot(dir string, self Self, now time.Time) (Action, error) {
 	if self.Factory && st.Active == nil && st.Pending == nil {
 		// Bottom of a rollback or a fresh card: the factory binary is the
 		// device, nothing to exec.
-		_ = SaveState(dir, st)
 		prune(dir, st)
-		return Action{}, join(loadErr, nil)
+		return Action{}, join(loadErr, SaveState(dir, st))
 	}
 
 	// 3. Promote a pending version that matches its hash.
@@ -303,10 +309,14 @@ func Boot(dir string, self Self, now time.Time) (Action, error) {
 			// as it is now: a rollback restores exactly this.
 			dataDir := dataDirOf(dir)
 			note := "promote to " + st.Active.Version
-			if _, err := Snapshot(dataDir, st.Active.Version); err != nil {
+			snapshot, err := Snapshot(dataDir, st.Active.Version)
+			if err != nil {
 				// Not fatal: the try gate still protects a crash loop, only a
 				// downgrade after a schema migration loses its safety net.
 				note += " (snapshot failed: " + err.Error() + ")"
+			} else if snapshot != "" {
+				// In the log: this is the directory a rollback restores.
+				note += " (snapshot in " + snapshot + ")"
 			}
 			// Never exec the file we are already running (see step 4).
 			if samePath(self.Path, st.Active.File) {
@@ -315,7 +325,7 @@ func Boot(dir string, self Self, now time.Time) (Action, error) {
 			return Action{Path: st.Active.File, Note: note}, join(loadErr, nil)
 		}
 		// A pending file that does not match is worth nothing: drop it.
-		_ = os.Remove(st.Pending.File)
+		removeQuiet(st.Pending.File)
 		st.Pending = nil
 	}
 
@@ -358,9 +368,8 @@ func Boot(dir string, self Self, now time.Time) (Action, error) {
 	if adopted {
 		return Action{}, join(loadErr, nil)
 	}
-	_ = SaveState(dir, st)
 	prune(dir, st)
-	return Action{}, join(loadErr, nil)
+	return Action{}, join(loadErr, SaveState(dir, st))
 }
 
 // rollback moves Active back to Previous, forgets pending, records the
@@ -381,7 +390,7 @@ func rollback(dir string, st *State, broken *Slot, reason string, now time.Time,
 		return Action{}, join(loadErr, err)
 	}
 	if broken.File != "" {
-		_ = os.Remove(broken.File)
+		removeQuiet(broken.File)
 	}
 	prune(dir, st)
 	act := Action{Note: "rollback from " + broken.Version}
@@ -407,14 +416,12 @@ func Rollback(dir string, now time.Time) (*Slot, error) {
 	if !slotMatches(st.Previous) {
 		bad := st.Previous
 		st.Previous = nil
-		_ = SaveState(dir, st)
-		if bad.File != "" {
-			_ = os.Remove(bad.File)
-		}
-		return nil, fmt.Errorf("update: previous binary %s is missing or damaged", bad.Version)
+		serr := SaveState(dir, st)
+		removeQuiet(bad.File)
+		return nil, join(fmt.Errorf("update: previous binary %s is missing or damaged", bad.Version), serr)
 	}
 	if st.Pending != nil {
-		_ = os.Remove(st.Pending.File)
+		removeQuiet(st.Pending.File)
 		st.Pending = nil
 	}
 	going := st.Active
@@ -449,10 +456,11 @@ func prune(dir string, st *State) {
 	entries, err := os.ReadDir(dir)
 	if err == nil {
 		for _, e := range entries {
-			name := e.Name()
+			// Base keeps the result inside dir whatever ReadDir returns.
+			name := filepath.Base(e.Name())
 			p := filepath.Join(dir, name)
 			if strings.HasPrefix(name, binaryPrefix) && !keep[filepath.Clean(p)] {
-				_ = os.Remove(p)
+				removeQuiet(p)
 			}
 		}
 	}
@@ -460,7 +468,7 @@ func prune(dir string, st *State) {
 	upd := filepath.Join(filepath.Dir(filepath.Clean(dir)), "updates")
 	if parts, err := filepath.Glob(filepath.Join(upd, "*.part")); err == nil {
 		for _, p := range parts {
-			_ = os.Remove(p)
+			removeQuiet(p)
 		}
 	}
 }

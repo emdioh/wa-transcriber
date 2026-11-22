@@ -20,7 +20,12 @@ const DefaultGOARM = "7"
 // does not work: `go build` never sets them, so the level read as "" on a
 // board and every install failed with "unsupported GOARM".
 func OwnAssetKey() (string, error) {
-	bi, _ := debug.ReadBuildInfo()
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		// A stripped or exotic build records nothing: DefaultGOARM decides on
+		// 32-bit ARM, and CheckExecutable still compares the ELF header.
+		bi = nil
+	}
 	return AssetKey(runtime.GOARCH, goarmOf(runtime.GOARCH, bi))
 }
 
