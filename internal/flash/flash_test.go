@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -19,11 +20,21 @@ type fixture struct {
 	sys     string
 	dev     string
 	boot    string
+	data    string // the running /data the session is staged from
+	tboot   string // the target's boot partition, where the mount seam puts it
 	card    string // /dev-like path of the running card
 	emmec   string // ... of the internal storage
 	mounts  string
 	source  string // the card's image bytes
 	regions []Region
+	// mounts holds every mount call the install made, in order.
+	mounts_ []string
+	// reread holds the disks whose partition table the install re-read, in
+	// order, and rereadErr is what that seam returns.
+	reread_   []string
+	rereadErr error
+	// umounts records the staging mount points the install detached.
+	umounts []string
 }
 
 // newFixture builds a card with a 4 KiB MBR region and three 8 KiB
@@ -32,10 +43,12 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	dir := t.TempDir()
 	f := &fixture{
-		dir:  dir,
-		sys:  filepath.Join(dir, "sys"),
-		dev:  filepath.Join(dir, "dev") + "/",
-		boot: filepath.Join(dir, "boot"),
+		dir:   dir,
+		sys:   filepath.Join(dir, "sys"),
+		dev:   filepath.Join(dir, "dev") + "/",
+		boot:  filepath.Join(dir, "boot"),
+		data:  filepath.Join(dir, "data"),
+		tboot: filepath.Join(dir, "target-boot"),
 	}
 	f.mounts = filepath.Join(dir, "mounts")
 	if err := os.MkdirAll(f.dev, 0o755); err != nil {
@@ -44,6 +57,17 @@ func newFixture(t *testing.T) *fixture {
 	if err := os.MkdirAll(f.boot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(f.data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(f.tboot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The running /data: the settings and a session with its WAL, and no
+	// wifi.json (a device that never joined a network).
+	mustErr(os.WriteFile(filepath.Join(f.data, "config.json"), []byte(`{"language":"it"}`), 0o600))
+	mustErr(os.WriteFile(filepath.Join(f.data, "session.db"), []byte("sqlite-header-and-a-few-pages"), 0o600))
+	mustErr(os.WriteFile(filepath.Join(f.data, "session.db-wal"), []byte("the-bulk-of-the-session"), 0o600))
 	// The running card: the SD slot, removable, 64 KiB of image.
 	f.card = f.dev + "mmcblk0"
 	f.mkdisk("mmcblk0", "MMC", true, 64<<10)
@@ -52,6 +76,10 @@ func newFixture(t *testing.T) *fixture {
 	// The eMMC: not removable, 4 MiB and empty.
 	f.emmec = f.dev + "mmcblk1"
 	f.mkdisk("mmcblk1", "MMC", false, 4<<20)
+	// The target's boot partition: <disk>p1, as the BBB names it. It exists so
+	// a mount of it can succeed; the fixture's mount seam hands the staging a
+	// directory of its own (see mount).
+	mustErr(os.WriteFile(f.dev+"mmcblk1p1", nil, 0o644))
 	// The marker lives next to the card's files; the mounts file starts empty.
 	if err := os.WriteFile(f.mounts, nil, 0o644); err != nil {
 		t.Fatal(err)
@@ -140,8 +168,76 @@ func (f *fixture) request() Request {
 		Target:     f.emmec,
 		Confirm:    "mmcblk1",
 		BootDir:    f.boot,
+		DataDir:    f.data,
 		Mounts:     f.mounts,
+		MountFunc:  f.mount,
+		RereadFunc: f.reread,
+		UmountFunc: f.umount,
 	}
+}
+
+// umount is the detach seam: it records the mount point and drops the
+// fixture's symlink (nothing is really mounted in a test).
+func (f *fixture) umount(dir string) error {
+	f.umounts = append(f.umounts, dir)
+	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return os.Remove(dir)
+	}
+	return nil
+}
+
+// reread is the partition-table seam: it records the disk it was asked about.
+func (f *fixture) reread(disk string) error {
+	f.reread_ = append(f.reread_, disk)
+	return f.rereadErr
+}
+
+// mount is the mount seam of the fixture: the mount root is the fixture's
+// temp directory, the staging directory stands for the target's boot
+// partition, and its contents *are* f.tboot from then on (there is nothing to
+// mount in a test, so the seam links the two paths). Every call is recorded.
+func (f *fixture) mount(src, dir, opts string) error {
+	f.mounts_ = append(f.mounts_, src+" "+opts)
+	if opts == "remount,ro" || src == "" {
+		if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return os.Remove(dir)
+		}
+		return nil
+	}
+	target := src
+	if rest, ok := strings.CutPrefix(src, "vfat:"); ok {
+		target = rest
+	}
+	if target != filepath.Join(f.dev, "mmcblk1p1") {
+		return fmt.Errorf("mount: %s is not the target's boot partition", src)
+	}
+	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	return os.Symlink(f.tboot, dir)
+}
+
+// stagedDir is where the staged files and the marker end up: the target's
+// boot partition, as <disk>p1 would be.
+func (f *fixture) stagedDir() string { return f.tboot }
+
+// lastMountOpts is the option string of the last mount call: the install has
+// to leave the boot partition mounted read-only again.
+func (f *fixture) lastMountOpts() string {
+	if len(f.mounts_) == 0 {
+		return ""
+	}
+	parts := strings.Fields(f.mounts_[len(f.mounts_)-1])
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
 }
 
 func TestTargetFindsTheInternalStorage(t *testing.T) {
@@ -489,31 +585,138 @@ func TestCloneFailsWhenTheReadBackDiffers(t *testing.T) {
 
 func TestInstallHappyPath(t *testing.T) {
 	f := newFixture(t)
-	var called int
-	req := f.request()
-	req.WithBootRW = func() (func() error, error) {
-		called++
-		return func() error { called++; return nil }, nil
-	}
-	rep, err := Install(context.Background(), req)
+	rep, err := Install(context.Background(), f.request())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rep.Written || rep.Plan.Target.Name != "mmcblk1" {
+	if !rep.Written || rep.Plan.Target.Name != "mmcblk1" || rep.Unpaired {
 		t.Fatalf("report = %+v", rep)
 	}
-	if called != 2 {
-		t.Fatalf("WithBootRW called %d times, want enter and leave", called)
+	// The marker is on the *target's* boot partition, not on the card's
+	// /boot: the card is out of the slot on the first boot from the clone.
+	if _, err := os.Stat(filepath.Join(f.boot, MarkerName)); err == nil {
+		t.Fatal("the marker was written on the card's boot partition")
 	}
-	m, err := ReadMarker(f.boot)
+	dir := f.stagedDir()
+	m, err := ReadMarker(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m == nil || m.From != "/dev/mmcblk0p4" || len(m.Files) != len(MigrateFiles) {
+	if m == nil || len(m.Files) != 3 {
 		t.Fatalf("marker = %+v", m)
 	}
-	if !strings.Contains(string(read(t, filepath.Join(f.boot, MarkerName))), "file session.db-wal") {
-		t.Fatal("the marker does not list session.db-wal")
+	// The old device format is still written for a reader of the old format,
+	// and the new format needs no device at all.
+	if m.From != "/dev/mmcblk0p4" {
+		t.Fatalf("marker from = %q", m.From)
+	}
+	if _, err := os.Stat(filepath.Join(dir, MigrateDir, "session.db-wal")); err != nil {
+		t.Fatalf("session.db-wal was not staged: %v", err)
+	}
+	if got := string(read(t, filepath.Join(dir, MigrateDir, "session.db"))); got != "sqlite-header-and-a-few-pages" {
+		t.Fatalf("staged session.db = %q", got)
+	}
+	// The files land before the marker: the marker lists only what is there.
+	for _, name := range m.Files {
+		if _, err := os.Stat(filepath.Join(dir, MigrateDir, name)); err != nil {
+			t.Fatalf("the marker lists %s, which is not staged", name)
+		}
+	}
+	for _, name := range rep.Staged {
+		if !slices.Contains(m.Files, name) {
+			t.Fatalf("%s was staged but the marker does not list it", name)
+		}
+	}
+	if len(rep.Skipped) == 0 || rep.Skipped[len(rep.Skipped)-1] != "wifi.json" {
+		t.Fatalf("skipped = %v, want wifi.json (the running /data has none)", rep.Skipped)
+	}
+	// The boot partition was mounted read-write and left read-only again.
+	if got := f.lastMountOpts(); got != "remount,ro" {
+		t.Fatalf("mounts = %v", f.mounts_)
+	}
+	if !strings.Contains(f.mounts_[0], " rw") {
+		t.Fatalf("the boot partition was never made writable: %v", f.mounts_)
+	}
+}
+
+// requestFor is the fixture's request with a different body for the writable
+// window on the target's boot partition.
+func (f *fixture) requestFor(fn func(dir string) (Stage, error)) Request {
+	req := f.request()
+	req.Stage = fn
+	return req
+}
+
+func TestStageFilesSkipsMissingAndWritesNoTempNames(t *testing.T) {
+	src := t.TempDir()
+	dst := filepath.Join(t.TempDir(), MigrateDir)
+	must(t, os.WriteFile(filepath.Join(src, "config.json"), []byte("{}"), 0o600))
+	must(t, os.WriteFile(filepath.Join(src, "session.db"), []byte("db"), 0o600))
+	// A directory where a file should be is skipped, not copied.
+	must(t, os.MkdirAll(filepath.Join(src, "session.db-shm"), 0o755))
+
+	st, err := stageFiles(src, dst, MigrateFiles, 1<<20, 4096, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(st.Files, ",") != "config.json,session.db" {
+		t.Fatalf("staged = %v", st.Files)
+	}
+	if strings.Join(st.Skipped, ",") != "session.db-wal,session.db-shm,wifi.json" {
+		t.Fatalf("skipped = %v", st.Skipped)
+	}
+	// Nothing but the staged names: no half-written temp file survives.
+	ents, err := os.ReadDir(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if !safeName(e.Name()) || strings.HasPrefix(e.Name(), ".") {
+			t.Fatalf("left behind: %s", e.Name())
+		}
+	}
+	if got := string(read(t, filepath.Join(dst, "session.db"))); got != "db" {
+		t.Fatalf("staged session.db = %q", got)
+	}
+}
+
+func TestStageFilesRefusesWithoutSpace(t *testing.T) {
+	src := t.TempDir()
+	dst := filepath.Join(t.TempDir(), MigrateDir)
+	must(t, os.WriteFile(filepath.Join(src, "session.db"), make([]byte, 1<<20), 0o600))
+	_, err := stageFiles(src, dst, MigrateFiles, 64<<10, 4096, nil)
+	if !errors.Is(err, ErrNoSpace) {
+		t.Fatalf("err = %v, want ErrNoSpace", err)
+	}
+	if !strings.Contains(err.Error(), "free") || !strings.Contains(err.Error(), "need") {
+		t.Fatalf("the refusal does not say how much is needed and how much is there: %v", err)
+	}
+	if _, err := os.Stat(dst); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a refused staging created the directory anyway")
+	}
+}
+
+func TestInstallWithoutSpaceBootsUnpaired(t *testing.T) {
+	f := newFixture(t)
+	// The target's boot partition, as small as a boot partition can be.
+	dir := f.stagedDir()
+	rep, err := Install(context.Background(), f.requestFor(func(dir string) (Stage, error) {
+		return stageFiles(f.data, filepath.Join(dir, MigrateDir), MigrateFiles, 4, 4096, nil)
+	}))
+	if err != nil {
+		t.Fatalf("a full boot partition must not fail the clone: %v", err)
+	}
+	if !rep.Written || !rep.Unpaired {
+		t.Fatalf("report = %+v", rep)
+	}
+	if !strings.Contains(rep.UnpairedWhy, "boot unpaired") || !strings.Contains(rep.UnpairedWhy, "free") {
+		t.Fatalf("unpaired why = %q", rep.UnpairedWhy)
+	}
+	if _, err := os.Stat(filepath.Join(dir, MarkerName)); err == nil {
+		t.Fatal("a marker was written with nothing staged behind it")
+	}
+	if _, err := os.Stat(filepath.Join(dir, MigrateDir)); err == nil {
+		t.Fatal("an empty staging directory was left on the boot partition")
 	}
 }
 
@@ -535,14 +738,18 @@ func TestInstallRefusalsLeaveBothDevicesAlone(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := f.request()
-			req.WithBootRW = func() (func() error, error) {
-				t.Fatal("the boot partition was made writable for a refused install")
-				return nil, nil
+			mounted := false
+			req.MountFunc = func(src, dir, opts string) error {
+				mounted = true
+				return nil
 			}
 			tc.modify(&req)
 			_, err := Install(context.Background(), req)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if mounted {
+				t.Fatal("a refused install mounted the target's boot partition")
 			}
 			if string(read(t, f.emmec)) != before {
 				t.Fatal("a refused install wrote to the destination")
@@ -586,10 +793,114 @@ func TestMarkerRoundTripAndPathSafety(t *testing.T) {
 	if len(m.Files) != 2 || m.Files[1] != "ok.txt" {
 		t.Fatalf("files = %v", m.Files)
 	}
-	if _, err := parseMarker("wat-migrate 1\nfile config.json\n"); err == nil {
-		t.Fatal("a marker without a source partition was accepted")
+	// A marker without a device is the install's own format (the files are
+	// staged on the boot partition), so it parses.
+	m2, err := parseMarker("wat-migrate 1\nfile config.json\n")
+	if err != nil || m2.From != "" || len(m2.Files) != 1 {
+		t.Fatalf("staged-only marker = %+v, %v", m2, err)
+	}
+	if _, err := parseMarker("wat-migrate 1\n"); err == nil {
+		t.Fatal("a marker that names nothing to copy was accepted")
+	}
+	m3, err := parseMarker("wat-migrate 1\nfile ../../etc/passwd\n")
+	if err != nil || len(m3.Files) != 0 {
+		t.Fatalf("an unsafe name was kept: %+v, %v", m3, err)
 	}
 	if got := NewMarker("sda").From; got != "/dev/sda4" {
 		t.Fatalf("devPart of sda4 = %q", got)
+	}
+}
+
+// TestInstallRereadsTheTableBeforeMountingTheTarget pins the bug the board
+// found: after the clone the kernel still had the old table, so mounting
+// <target>p1 read the previous layout and failed with EINVAL. The re-read has
+// to happen before the staging mount, and a re-read that fails must not lose
+// the verified clone.
+func TestInstallRereadsTheTableBeforeMountingTheTarget(t *testing.T) {
+	t.Run("before the mount", func(t *testing.T) {
+		f := newFixture(t)
+		if _, err := Install(context.Background(), f.requestFor(nil)); err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		if len(f.reread_) != 1 || f.reread_[0] != f.emmec {
+			t.Fatalf("re-read = %v, want one call for %s", f.reread_, f.emmec)
+		}
+	})
+	t.Run("a failed re-read keeps the verified clone", func(t *testing.T) {
+		f := newFixture(t)
+		f.rereadErr = errors.New("partx: not a block device")
+		rep, err := Install(context.Background(), f.request())
+		if err != nil {
+			t.Fatalf("Install after a failed re-read: %v", err)
+		}
+		if !rep.Written {
+			t.Fatal("the clone is verified but the report says it was not written")
+		}
+		if len(f.reread_) != 1 {
+			t.Fatalf("re-read = %v, want one attempt", f.reread_)
+		}
+	})
+}
+
+// TestStagedTempNameIsFATSafe pins the bug the board found: the staging runs
+// on the boot partition, which is VFAT, where a colon is not a legal file name
+// character, so `.staging:config.json` failed with EINVAL and no file was ever
+// staged. A temp name must survive a FAT filesystem.
+func TestStagedTempNameIsFATSafe(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range MigrateFiles {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(t.TempDir(), MigrateDir)
+	st, err := stageFiles(dir, out, MigrateFiles, 1<<20, 4096, nil)
+	if err != nil {
+		t.Fatalf("stageFiles: %v", err)
+	}
+	if len(st.Files) != len(MigrateFiles) {
+		t.Fatalf("staged %v, want %v", st.Files, MigrateFiles)
+	}
+	// What the boot partition must accept: no colon, no backslash, nothing
+	// outside the printable VFAT set, and no leftovers with the temp prefix.
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		for _, r := range e.Name() {
+			if r == ':' || r == '\\' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' || r < 0x20 {
+				t.Fatalf("%q is not a legal VFAT file name", e.Name())
+			}
+		}
+		if strings.HasPrefix(e.Name(), migrateTempPrefix) {
+			t.Fatalf("temp file %q left behind", e.Name())
+		}
+	}
+}
+
+// TestInstallDetachesTheStagingMount pins the second bug the board found: the
+// cleanup only remounted read-only (with the arguments in the wrong order, so
+// it failed), which left the target's boot partition mounted rw — the next
+// install then refused because something was mounted from the destination.
+func TestInstallDetachesTheStagingMount(t *testing.T) {
+	f := newFixture(t)
+	if _, err := Install(context.Background(), f.request()); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(f.umounts) != 1 {
+		t.Fatalf("umounts = %v, want the staging mount point detached once", f.umounts)
+	}
+	// The read-only remount must come first, in the documented form
+	// (dir, "", "remount,ro"), and the mount point must be gone afterwards.
+	last := ""
+	for _, m := range f.mounts_ {
+		last = m
+	}
+	if !strings.Contains(last, "remount,ro") {
+		t.Fatalf("the last mount call was %q, want a remount read-only before the detach", last)
+	}
+	if _, err := os.Lstat(filepath.Join(f.dir, "run", "wat-stage")); err == nil {
+		t.Fatal("the staging mount point was left behind")
 	}
 }

@@ -87,12 +87,17 @@ func fileSize(path string) int64 {
 // flashPaths is where a flash install looks: the board defaults, with every
 // one of them separately replaceable (a test, a dev machine without /boot).
 type flashPaths struct {
-	SysBlock   string
-	DevDir     string
-	BootDir    string
-	Mounts     string
-	Root       string
-	WithBootRW func() (func() error, error)
+	SysBlock string
+	DevDir   string
+	BootDir  string
+	DataDir  string
+	Mounts   string
+	Root     string
+	// MountFunc replaces exec mount(8) (a test).
+	MountFunc func(src, dir, opts string) error
+	// Logf is where the install reports each step: the -flash mode sets the
+	// logger that writes to the console, the web card the server's logger.
+	Logf func(format string, args ...any)
 }
 
 // flashRequest builds the flash.Request of an install to target ("" = the
@@ -105,6 +110,7 @@ func flashRequest(imgReq imageRequest, paths flashPaths, target, confirm string,
 		return req, err
 	}
 	req = flash.Request{
+		Logf:       paths.Logf,
 		Sys:        flash.Sys{SysBlock: paths.SysBlock, DevDir: paths.DevDir, Root: paths.Root},
 		Source:     dev,
 		SourceName: name,
@@ -112,12 +118,10 @@ func flashRequest(imgReq imageRequest, paths flashPaths, target, confirm string,
 		Target:     target,
 		Confirm:    confirm,
 		BootDir:    paths.BootDir,
+		DataDir:    paths.DataDir,
 		Mounts:     paths.Mounts,
+		MountFunc:  paths.MountFunc,
 		Progress:   progress,
-		WithBootRW: paths.WithBootRW,
-	}
-	if paths.WithBootRW == nil {
-		req.WithBootRW = bootRW(imgReq)
 	}
 	return req, nil
 }
@@ -137,6 +141,7 @@ func runFlashCmd(dev, confirm, bootDir, dataDir, layoutFile string) error {
 		SysBlock: defaultSysBlock,
 		DevDir:   defaultDevDir,
 		BootDir:  bootDir,
+		DataDir:  dataDir,
 		Mounts:   "/proc/self/mounts",
 	}
 	if code := runFlash(ctx, imgReq, paths, dev, confirm, os.Stdout, os.Stderr); code != 0 {
@@ -160,6 +165,9 @@ var errFlashFailed = errors.New("install to the internal storage did not complet
 func runFlash(ctx context.Context, imgReq imageRequest, paths flashPaths, target, confirm string,
 	stdout, stderr io.Writer) int {
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// Every step of the install goes to the console as it happens: the point
+	// of this mode is that somebody is watching a serial line.
+	paths.Logf = func(format string, args ...any) { log.Info(fmt.Sprintf(format, args...)) }
 
 	// The target, before anything else: the whole point of the rule is that
 	// a device nobody can name is not written.
@@ -181,8 +189,8 @@ func runFlash(ctx context.Context, imgReq imageRequest, paths flashPaths, target
 	for _, r := range plan.Regions {
 		fmt.Fprintf(stdout, "  %-7s at %10d  %s\n", r.Name, r.Offset, flashSize(r.Size))
 	}
-	fmt.Fprintf(stdout, "Migration marker: %s lists %s from %s\n",
-		plan.Marker.From, strings.Join(plan.Marker.Files, ", "), req.BootDir)
+	fmt.Fprintf(stdout, "Migration marker: %s lists %s, staged in %s/ on the internal storage\n",
+		flashMarkerName, strings.Join(plan.Marker.Files, ", "), flash.MigrateDir)
 
 	// The progress: one line every 16 MB plus the start of each region, so a
 	// serial console shows movement and the log keeps a record.
@@ -216,9 +224,17 @@ func runFlash(ctx context.Context, imgReq imageRequest, paths flashPaths, target
 	for _, r := range rep.Regions {
 		fmt.Fprintf(stdout, "  %-7s sha256 %s\n", r.Name, r.SHA256)
 	}
-	fmt.Fprintln(stdout, "The copy is written and reads back identical; the migration marker is on the boot partition.")
+	fmt.Fprintln(stdout, "The copy is written and reads back identical.")
+	if rep.Unpaired {
+		fmt.Fprintln(stdout, "The session was NOT carried over: "+rep.UnpairedWhy+".")
+		fmt.Fprintln(stdout, "Power the device off and remove the SD card when you are ready: it boots from the internal storage")
+		fmt.Fprintln(stdout, "unpaired (it asks for the phone again). Keep the card: its /data still has the pairing.")
+		return 0
+	}
+	fmt.Fprintf(stdout, "The settings, the WhatsApp session and the WiFi networks are staged on its boot partition (%s/, %s).\n",
+		flash.MigrateDir, strings.Join(rep.Staged, ", "))
 	fmt.Fprintln(stdout, "Power the device off, REMOVE THE SD CARD, and power it on again: it boots from the internal storage,")
-	fmt.Fprintln(stdout, "copies its settings, WhatsApp session and WiFi networks from the card's data partition once, and stays paired.")
+	fmt.Fprintln(stdout, "copies them into its own /data once, and stays paired.")
 	return 0
 }
 
@@ -332,11 +348,13 @@ func (s *flashService) Install(ctx context.Context, confirm string) (web.FlashSt
 	}
 	rep, err := flash.Install(ctx, req)
 	if err != nil {
-		s.log.Warn("flash: install to the internal storage failed", "err", err)
 		return s.Status(ctx), err
 	}
 	s.log.Warn("flash: internal storage written and verified", "target", rep.Plan.Target.Device,
-		"bytes", rep.Plan.Need, "marker", flashMarkerName)
+		"bytes", rep.Plan.Need, "marker", flashMarkerName, "staged", strings.Join(rep.Staged, ", "))
+	if rep.Unpaired {
+		s.log.Warn("flash: the device will boot unpaired", "why", rep.UnpairedWhy)
+	}
 	return s.Status(ctx), nil
 }
 

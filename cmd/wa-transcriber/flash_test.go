@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/emdioh/wa-transcriber/internal/flash"
@@ -77,10 +79,12 @@ func newFlashBoard(t *testing.T) *flashBoard {
 	mounts := filepath.Join(dir, "mounts")
 	mustWrite(t, mounts, nil)
 	b.paths = flashPaths{
-		SysBlock: b.img.SysBlock,
-		DevDir:   dev,
-		BootDir:  boot,
-		Mounts:   mounts,
+		SysBlock:  b.img.SysBlock,
+		DevDir:    dev,
+		BootDir:   boot,
+		DataDir:   b.img.Dir,
+		Mounts:    mounts,
+		MountFunc: b.fakeMount,
 	}
 	return b
 }
@@ -128,6 +132,34 @@ func mustWrite(t *testing.T, path string, b []byte) {
 	}
 }
 
+// tboot is the directory the console tests' mount seam stands for: the
+// target's boot partition, <disk>p1.
+func (b *flashBoard) tboot() string { return filepath.Join(b.dir, "wat-stage") }
+
+// fakeMount is the console tests' stand-in for mount(8): bringing the target's
+// boot partition up links the mount point to the directory standing for it, so
+// the staging writes into something a test can read; "remount,ro" removes the
+// link. Only the target's p1 is accepted, which is what an install may touch.
+func (b *flashBoard) fakeMount(src, dir, opts string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	if src == "" || opts == "remount,ro" {
+		return nil
+	}
+	target := src
+	if rest, ok := strings.CutPrefix(src, "vfat:"); ok {
+		target = rest
+	}
+	if target != filepath.Join(b.dir, "mmcblk1p1") {
+		return fmt.Errorf("mount: %s is not the target's boot partition", src)
+	}
+	if err := os.MkdirAll(b.tboot(), 0o755); err != nil {
+		return err
+	}
+	return os.Symlink(b.tboot(), dir)
+}
+
 func writeFilled(t *testing.T, path string, size int64, fill byte) {
 	t.Helper()
 	b := make([]byte, size)
@@ -139,6 +171,10 @@ func writeFilled(t *testing.T, path string, size int64, fill byte) {
 
 func TestRunFlashInstallsAndSaysWhatToDo(t *testing.T) {
 	b := newFlashBoard(t)
+	// The running /data: settings and a session, no wifi.json.
+	mustWrite(t, filepath.Join(b.img.Dir, "config.json"), []byte(`{"language":"it"}`))
+	mustWrite(t, filepath.Join(b.img.Dir, "session.db"), []byte("session"))
+	mustWrite(t, filepath.Join(b.img.Dir, "session.db-wal"), []byte("wal"))
 	out, errOut := b.start()
 
 	// The eMMC now holds the card's MBR, boot and both roots at the same
@@ -161,12 +197,22 @@ func TestRunFlashInstallsAndSaysWhatToDo(t *testing.T) {
 	if !bytes.Contains([]byte(errOut), []byte("%")) {
 		t.Fatalf("no progress on stderr:\n%s", errOut)
 	}
-	// The marker names the card's DATA partition and the files to carry.
-	marker := string(readFile(t, filepath.Join(b.paths.BootDir, flash.MarkerName)))
-	if !bytes.Contains([]byte(marker), []byte("from /dev/mmcblk0p4")) ||
-		!bytes.Contains([]byte(marker), []byte("file session.db")) ||
-		!bytes.Contains([]byte(marker), []byte("file wifi.json")) {
+	// The marker and the files are on the *target's* boot partition: the
+	// card's /boot is not where the first eMMC boot reads them from.
+	if _, err := os.Stat(filepath.Join(b.paths.BootDir, flash.MarkerName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the marker landed on the card's boot partition")
+	}
+	marker := string(readFile(t, filepath.Join(b.tboot(), flash.MarkerName)))
+	if !bytes.Contains([]byte(marker), []byte("file session.db")) ||
+		!bytes.Contains([]byte(marker), []byte("file session.db-wal")) ||
+		bytes.Contains([]byte(marker), []byte("file wifi.json")) {
 		t.Fatalf("marker:\n%s", marker)
+	}
+	if _, err := os.Stat(filepath.Join(b.tboot(), flash.MigrateDir, "session.db-wal")); err != nil {
+		t.Fatalf("session.db-wal was not staged: %v", err)
+	}
+	if !bytes.Contains([]byte(out), []byte("wat-migrate.d")) {
+		t.Fatalf("the console does not say where the session was staged:\n%s", out)
 	}
 }
 
@@ -184,7 +230,7 @@ func TestRunFlashRefusesWithoutConfirmation(t *testing.T) {
 	if !bytes.Equal(before, readFile(t, filepath.Join(b.dir, "mmcblk1"))) {
 		t.Fatal("an unconfirmed run wrote the destination")
 	}
-	if _, err := os.Stat(filepath.Join(b.paths.BootDir, flash.MarkerName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(b.tboot(), flash.MarkerName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("an unconfirmed run wrote the migration marker")
 	}
 }
@@ -245,11 +291,12 @@ func TestFlashServiceStatusAndRefusals(t *testing.T) {
 	if !bytes.Equal(before, readFile(t, filepath.Join(b.dir, "mmcblk1"))) {
 		t.Fatal("an unconfirmed install wrote the destination")
 	}
+	mustWrite(t, filepath.Join(b.img.Dir, "config.json"), []byte(`{}`))
 	if _, err := svc.Install(context.Background(), "mmcblk1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(b.paths.BootDir, flash.MarkerName)); err != nil {
-		t.Fatalf("the marker was not written: %v", err)
+	if _, err := os.Stat(filepath.Join(b.tboot(), flash.MarkerName)); err != nil {
+		t.Fatalf("the marker was not written on the target's boot partition: %v", err)
 	}
 }
 

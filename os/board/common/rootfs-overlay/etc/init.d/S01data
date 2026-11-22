@@ -141,48 +141,69 @@ fi
 # --- /data migration from the card this image was installed from (M11) -----
 #
 # "Install this card to the internal storage" copies the card's system
-# partitions onto the eMMC and then writes /boot/wat-migrate on the *boot*
-# partition of that same card, which was copied too: the marker travels with
-# the clone and the first start from the internal storage finds it here. It
-# names the card's DATA partition and the files that keep the device itself
-# (the settings, the WhatsApp session with its WAL and shared-memory sidecar,
-# the WiFi networks); the new /data was just created empty above.
+# partitions onto the eMMC and then writes two things on the *target's* boot
+# partition, which was copied too, so they travel with the clone:
+#
+#   wat-migrate.d/<name>   the files that keep the device itself (the settings,
+#                          the WhatsApp session with its WAL and shared-memory
+#                          sidecar, the WiFi networks)
+#   wat-migrate            one `file` line per staged file
+#
+# The files are staged there and not named by device because the first boot
+# from the internal storage happens only after the owner removed the card —
+# the AM335x ROM boots the SD whenever one is inserted — and by then the
+# card's DATA partition does not exist. A marker that names it instead (the
+# older format, `from /dev/mmcblk0p4`) is still read: the files this one does
+# not find staged are copied from that device, for the case of a card that is
+# still in the slot.
 #
 # Safe against a power cut at any point: every file is copied to a temp name
 # in /data, fsynced and renamed into place, and the marker is only deleted
 # after all of them are in. A run that dies half way leaves the marker in
 # place and the next start copies everything again onto the files it already
-# wrote — the copy is idempotent because the source is never modified (it is
-# mounted read-only, nodev and nosuid, and only read). The source partition
-# is the card, which stays in the slot until this runs once; a reboot after
-# the copy finds the marker gone.
+# wrote — the copy is idempotent because the sources are never modified (/boot
+# is mounted read-only and the staged files are only read). A reboot after the
+# copy finds the marker gone.
 migrate_from_marker() {
 	marker=/boot/wat-migrate
 	[ -f "$marker" ] || return 0
+	stageddir=/boot/wat-migrate.d
+	# /boot is read-only, so the staged files are on it as it is.
+	[ -d "$stageddir" ] || stageddir=
 	from=$(sed -n 's/^from //p' "$marker" | head -n 1)
 	# Only a partition device, never a path from a card reader: the marker
-	# sits on a FAT filesystem anyone can edit.
-	case "$from" in
-	/dev/*) ;;
-	*)
-		log "wat-migrate names no device ($from), ignoring it"
+	# sits on a FAT filesystem anyone can edit. No device at all is the
+	# normal, staged case.
+	if [ -n "$from" ]; then
+		case "$from" in
+		/dev/*) ;;
+		*)
+			log "wat-migrate names no device ($from), ignoring it"
+			from=
+			;;
+		esac
+	fi
+	if [ -z "$stageddir" ] && [ -z "$from" ]; then
+		log "wat-migrate names no staged files and no device, removing it"
 		rm -f "$marker"
 		return 0
-		;;
-	esac
-	if [ ! -b "$from" ]; then
-		log "wat-migrate names $from, which is not a block device: keeping the marker"
-		return 0
 	fi
-	# The old DATA is mounted read-only for the duration. It is not mounted
-	# at /data: that is the new, empty partition. nosuid/nodev because it is
-	# only ever read from.
-	mnt=/run/wat-migrate
-	mkdir -p "$mnt"
-	if ! mount -t ext4 -o ro,nodev,nosuid,noatime "$from" "$mnt"; then
-		log "cannot mount $from read-only, keeping the marker for the next start"
-		rmdir "$mnt" 2>/dev/null || true
-		return 0
+	# The old DATA is mounted read-only for the duration, and only if it is
+	# there: it is not mounted at /data, that is the new, empty partition.
+	# nosuid/nodev because it is only ever read from.
+	mnt=
+	if [ -n "$from" ]; then
+		if [ -b "$from" ]; then
+			mnt=/run/wat-migrate
+			mkdir -p "$mnt"
+			if ! mount -t ext4 -o ro,nodev,nosuid,noatime "$from" "$mnt"; then
+				log "cannot mount $from read-only, keeping the marker for the next start"
+				rmdir "$mnt" 2>/dev/null || true
+				mnt=
+			fi
+		else
+			log "wat-migrate names $from, which is not a block device: the staged files are used"
+		fi
 	fi
 	copied=0
 	for name in $(sed -n 's/^file //p' "$marker"); do
@@ -194,16 +215,22 @@ migrate_from_marker() {
 			continue
 			;;
 		esac
-		[ -f "$mnt/$name" ] || continue
+		src=
+		if [ -n "$stageddir" ] && [ -f "$stageddir/$name" ]; then
+			src=$stageddir/$name
+		elif [ -n "$mnt" ] && [ -f "$mnt/$name" ]; then
+			src=$mnt/$name
+		fi
+		[ -n "$src" ] || continue
 		# Temp name in /data, fsync, rename: a power cut leaves either the
 		# old file or the complete new one, never half of one.
 		tmp="/data/.$name.migrating"
 		rm -f "$tmp"
-		if ! cp "$mnt/$name" "$tmp"; then
-			log "copying $name from $from failed, keeping the marker"
+		if ! cp "$src" "$tmp"; then
+			log "copying $name from $src failed, keeping the marker"
 			sync
-			umount "$mnt"
-			rmdir "$mnt" 2>/dev/null || true
+			[ -z "$mnt" ] || umount "$mnt"
+			[ -z "$mnt" ] || rmdir "$mnt" 2>/dev/null || true
 			return 0
 		fi
 		sync
@@ -211,8 +238,8 @@ migrate_from_marker() {
 			log "renaming $name into place failed, keeping the marker"
 			rm -f "$tmp"
 			sync
-			umount "$mnt"
-			rmdir "$mnt" 2>/dev/null || true
+			[ -z "$mnt" ] || umount "$mnt"
+			[ -z "$mnt" ] || rmdir "$mnt" 2>/dev/null || true
 			return 0
 		fi
 		copied=$((copied + 1))
@@ -223,14 +250,31 @@ migrate_from_marker() {
 	# power cut in the microsecond between the last rename and the marker's
 	# deletion costs one more run of this block, never a lost file).
 	sync
-	umount "$mnt" || log "unmounting the old DATA at $mnt failed, keeping the marker"
-	if mountpoint -q "$mnt"; then
-		return 0
+	if [ -n "$mnt" ]; then
+		umount "$mnt" || log "unmounting the old DATA at $mnt failed, keeping the marker"
+		if mountpoint -q "$mnt"; then
+			return 0
+		fi
+		rmdir "$mnt" 2>/dev/null || true
 	fi
-	rmdir "$mnt" 2>/dev/null || true
 	rm -f "$marker"
 	sync
-	log "copied $copied file(s) from $from, removed the migration marker"
+	log "copied $copied file(s) into /data, removed the migration marker"
+	# The staged files are dead weight now: a later boot must not copy them
+	# over the files the device has been writing since. It needs /boot
+	# writable for a moment; if that fails the marker is gone anyway, so the
+	# copy has already succeeded and the leftovers are only a few kB.
+	if [ -n "$stageddir" ]; then
+		if mount -o remount,rw /boot; then
+			rm -rf "$stageddir"
+			sync
+			if ! mount -o remount,ro /boot; then
+				log "/boot is still writable, remounting it read-only failed"
+			fi
+		else
+			log "cannot remount /boot writable, leaving the staged files in $stageddir"
+		fi
+	fi
 }
 
 migrate_from_marker

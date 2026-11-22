@@ -181,20 +181,42 @@ grep -q 'wat_part "\$disk" 3' "$OVL/etc/init.d/S01data" ||
 fail "S01data must know the two root slots (p2, p3) to stay off them"
 grep -q -- '--nr 4' "$OVL/etc/init.d/S01data" ||
 fail "S01data must hand partition 4 to the kernel (partx -a --nr 4)"
-# Install to the internal storage (M11): the eMMC clone carries /boot/wat-migrate
-# and the first start from it copies /data across. Without the marker read and
-# both its parts (from, file) the device comes up on the internal storage
-# unpaired, and without the read-only mount the old DATA could be written.
+# Install to the internal storage (M11): the eMMC clone carries the staged
+# files (wat-migrate.d/) and /boot/wat-migrate on the *target's* boot
+# partition, and the first start from it copies /data across from there. The
+# staged directory is the working path: the card the files came from is out of
+# the slot by then (the ROM boots the SD when one is inserted), so a marker
+# that only names the card's DATA partition can never be honoured. Without the
+# read of the staged directory the device comes up on the internal storage
+# unpaired.
 grep -q 'migrate_from_marker' "$OVL/etc/init.d/S01data" ||
 fail "S01data does not run the /data migration (migrate_from_marker)"
-grep -q 's/^from //p' "$OVL/etc/init.d/S01data" ||
-fail "S01data does not read the source partition from the migration marker"
+grep -q 'stageddir=/boot/wat-migrate.d' "$OVL/etc/init.d/S01data" ||
+fail "S01data does not look for the staged files on /boot (wat-migrate.d)"
+grep -q '\[ -f "\$stageddir/\$name" \]' "$OVL/etc/init.d/S01data" ||
+fail "S01data does not copy from the staged directory: the card is gone on the first eMMC boot"
 grep -q 's/^file //p' "$OVL/etc/init.d/S01data" ||
 fail "S01data does not read the file list from the migration marker"
+# The old format is still read (a card left in on a board where the first
+# boot happens with it inserted), but nothing may depend on it any more.
+grep -q 's/^from //p' "$OVL/etc/init.d/S01data" ||
+fail "S01data does not read the source partition from the migration marker"
 grep -q 'mount -t ext4 -o ro,nodev,nosuid' "$OVL/etc/init.d/S01data" ||
 fail "S01data must mount the old DATA read-only for the migration"
 grep -q '/boot/wat-migrate' "$OVL/etc/init.d/S01data" ||
 fail "S01data does not look for /boot/wat-migrate"
+# The staged files are deleted after the marker, with /boot writable for the
+# moment it takes; failing that, the marker is still gone and the copy stands.
+grep -q 'mount -o remount,rw /boot' "$OVL/etc/init.d/S01data" ||
+fail "S01data does not make /boot writable to delete the staged files"
+grep -q 'rm -rf "\$stageddir"' "$OVL/etc/init.d/S01data" ||
+fail "S01data does not delete wat-migrate.d after the copy"
+# The staged files must be gone *after* the marker: deleting them first would
+# leave a marker with nothing behind it if the power fails in between.
+m=$(grep -n 'rm -f "\$marker"' "$OVL/etc/init.d/S01data" | tail -n 1 | cut -d: -f1)
+s=$(grep -n 'rm -rf "\$stageddir"' "$OVL/etc/init.d/S01data" | tail -n 1 | cut -d: -f1)
+[ -n "$m" ] && [ -n "$s" ] && [ "$m" -lt "$s" ] ||
+fail "S01data must delete the migration marker before the staged files"
 # The migration has to run after DATA is mounted at /data, or it copies into
 # nothing.
 a=$(grep -n 'DATA mounted from \$datadev' "$OVL/etc/init.d/S01data" | head -n 1 | cut -d: -f1)

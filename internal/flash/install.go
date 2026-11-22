@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -14,7 +15,9 @@ import (
 // Refusals that are not about the target: each one is a sentence the console
 // and the UI show as it is.
 var (
-	// ErrNoConfirm is the typed confirmation that was not given.
+	// ErrNoConfirm is the typed confirmation that was not given. The line a
+	// refusal prints is "<this>: <device>", so the sentence ends on the word
+	// "type" and the device follows it.
 	ErrNoConfirm = errors.New("flash: type the device name to confirm")
 	// ErrSameDisk is a destination that is the running disk: that clone
 	// overwrites the source while reading it.
@@ -45,16 +48,40 @@ type Request struct {
 	// Confirm is what the owner typed: it has to equal the target's device
 	// name ("/dev/mmcblk1") or its bare name ("mmcblk1").
 	Confirm string
-	// BootDir is the mounted boot partition of the *source* (/boot), where
-	// the migration marker is written.
+	// BootDir is the mounted boot partition of the *source* (/boot). It is
+	// where the binary and the board settings came from; the marker itself
+	// is written on the boot partition of the *target*, which Install mounts
+	// off Target.Device (partition 1).
 	BootDir string
+	// DataDir is the running /data, where the files that make the device
+	// itself are staged from (empty = /data).
+	DataDir string
 	// Mounts is the file a process's mount table is read from
 	// (/proc/self/mounts). Empty skips the "is it mounted" check.
 	Mounts string
+	// Logf is where the install reports what it is doing: nil is silent. A
+	// serial console is the only place an install can be watched, so every
+	// step that can be slow (the clone, the read-back, the mount, each staged
+	// file) says so before it starts and how long it took after.
+	Logf func(format string, args ...any)
+	// RereadFunc makes the kernel re-read the partition table of a disk, like
+	// partprobe(8). Nil is the board's implementation (partx -u), which the
+	// image has. It is best effort: a failure only makes the mount below
+	// report the less specific error.
+	RereadFunc func(disk string) error
+	// UmountFunc detaches a mount point. Nil is the board's implementation
+	// (unmount(2)); a test injects its own because nothing is really mounted.
+	UmountFunc func(dir string) error
+	// MountFunc mounts a device like "mount"(8) would:
+	// MountFunc(device, dir, "ro") and MountFunc(dir, "", "remount,rw"). Nil
+	// is the board's implementation (exec mount, which the image has).
+	MountFunc func(src, dir, opts string) error
+	// Stage replaces what is done inside the writable window on the target's
+	// boot partition (stage the files, then write the marker), so a test can
+	// exercise the no-space and nothing-to-stage paths. Nil is the real one.
+	Stage func(dir string) (Stage, error)
 	// Progress is called while copying and verifying.
 	Progress func(done, total int64)
-	// WithBootRW makes the boot partition writable for the marker.
-	WithBootRW func() (func() error, error)
 }
 
 // InstallPlan is what Install would do, worked out before anything is
@@ -76,6 +103,17 @@ type Report struct {
 	Written bool
 	// Regions carries the hashes when Written is true.
 	Regions []Region
+	// Staged lists the files the install put on the target's boot partition
+	// for the first boot to copy into /data, and Skipped those the running
+	// /data does not have.
+	Staged  []string
+	Skipped []string
+	// Unpaired is set when the copy is complete and verified but the session
+	// could not be carried over (staging failed, or /data had nothing to
+	// stage): the target boots, it just starts unpaired, and the message in
+	// UnpairedWhy says so.
+	Unpaired    bool
+	UnpairedWhy string
 }
 
 // Plan works out the target and the region list and makes every refusal that
@@ -105,7 +143,7 @@ func Plan(req Request) (InstallPlan, error) {
 		return p, fmt.Errorf("%w: %s is %s, the copy needs %s", ErrTooSmall, t.Device, sizeMB(t.Size), sizeMB(need))
 	}
 	if !confirmed(req.Confirm, t.Device) {
-		return p, fmt.Errorf("%w: type %s", ErrNoConfirm, t.Device)
+		return p, fmt.Errorf("%w: %s", ErrNoConfirm, t.Device)
 	}
 	if err := NotMounted(req.Mounts, t.Device); err != nil {
 		return p, err
@@ -232,13 +270,15 @@ func confirmed(got, dev string) bool {
 }
 
 // Install runs the plan: opens the source and the destination, clones the
-// regions, reads them back and, only then, writes the migration marker on the
-// source's boot partition.
+// regions and reads them back. Then, only if that is clean, it mounts the
+// target's boot partition read-write, stages the /data files into MigrateDir
+// there, writes the marker last and unmounts again.
 //
-// It returns a Report for every outcome. An error with Written=false means:
-// the card still boots the device and the target is not bootable yet — rerun
-// it. Nothing half-done is ever reported as done, and the source is only ever
-// read except for the marker file.
+// It returns a Report for every outcome. An error means: the card still boots
+// the device and the target is not bootable yet — rerun it. Nothing half-done
+// is ever reported as done, and the source is only ever read. A copy that is
+// complete but could not carry the session over is not an error: it is
+// Written with Unpaired set, because the target boots (just unpaired).
 func Install(ctx context.Context, req Request) (Report, error) {
 	var rep Report
 	p, err := Plan(req)
@@ -266,16 +306,194 @@ func Install(ctx context.Context, req Request) (Report, error) {
 	if err := dst.Sync(); err != nil {
 		return rep, &ErrNotWritten{Region: "the copy", Err: fmt.Errorf("flushing %s: %w", p.Target.Device, err)}
 	}
-	// The marker goes on last, after the read-back: a marker written before
-	// the clone completed would make the first boot on the empty internal
-	// storage look for /data on a partition that is not there yet. A failure
-	// here is not a failed clone — the target boots, it just starts unpaired.
-	if err := WriteMarker(req.BootDir, p.Marker, req.WithBootRW); err != nil {
-		return rep, fmt.Errorf("flash: the copy is complete and verified, but the migration marker could not be written "+
-			"(the device will boot unpaired): %w", err)
-	}
+
+	// The session travels with the clone. It is staged on the boot partition
+	// of the *target*, because the first boot from that disk is the one after
+	// the owner took the card out — the old format named the card's DATA here,
+	// and on the board that device is simply not there at that moment. The
+	// marker goes last: a marker on a boot partition whose staged files are
+	// not all there yet would make that first boot copy half a session.
+	stage, serr := OnTargetBoot(req, p.Target, req.stageFunc(p.Marker))
 	rep.Written = true
+	rep.Staged, rep.Skipped = stage.Files, stage.Skipped
+	if serr != nil {
+		rep.Unpaired = true
+		rep.UnpairedWhy = fmt.Sprintf("the session could not be staged (%v), so the device will boot unpaired: "+
+			"its settings, WhatsApp session and WiFi networks stay on the card", serr)
+	} else if len(rep.Staged) == 0 {
+		rep.Unpaired = true
+		rep.UnpairedWhy = fmt.Sprintf("there was nothing in %s to carry over, so the device will boot unpaired",
+			req.dataDir())
+	}
 	return rep, nil
+}
+
+// OnTargetBoot makes the target's boot partition (<disk>p1) writable, hands
+// fn its mount point and unmounts it again whatever fn did. It is the only
+// part of the install that needs a kernel: fn gets a directory, so the
+// staging and the marker are testable without mounting anything.
+//
+// The write went through the whole-disk node, and the kernel only re-reads the
+// partition table that came with the clone on the next boot; the boot
+// partition is therefore mounted with the crc32 VFAT driver first, which takes
+// the offsets from the partition entry itself.
+func OnTargetBoot(req Request, t Target, fn func(mountPoint string) (Stage, error)) (Stage, error) {
+	logf := req.logf()
+	var st Stage
+	if t.Name == "" || t.Device == "" {
+		return st, errors.New("flash: the target has no boot partition to stage on")
+	}
+	bootDev := req.Sys.devDir() + partitionDev(t.Name, 1)
+	// The clone rewrote the target's partition table; the kernel still has the
+	// old one in memory. Without this the mount below reads the previous
+	// layout's bytes and fails.
+	logf("flash: re-reading the partition table of %s", t.Device)
+	rerr := req.rereadFunc()(t.Device)
+	if rerr != nil {
+		logf("flash: re-reading the table failed (%v), trying the mount anyway", rerr)
+	}
+	dir := filepath.Join(mountRoot(), "wat-stage")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return st, fmt.Errorf("flash: creating %s: %w", dir, err)
+	}
+	mount := req.mountFunc()
+	var merr error
+	mounted := false
+	for _, src := range []string{"vfat:" + bootDev, bootDev} {
+		logf("flash: mounting %s on %s read-write", src, dir)
+		if merr = mount(src, dir, "rw"); merr == nil {
+			mounted = true
+			logf("flash: mounted %s", dir)
+			break
+		}
+		logf("flash: mount failed: %v", merr)
+	}
+	if !mounted {
+		os.Remove(dir)
+		if rerr != nil {
+			return st, fmt.Errorf("flash: mounting the target's boot partition read-write: %w (after %v)", merr, rerr)
+		}
+		return st, fmt.Errorf("flash: mounting the target's boot partition read-write: %w", merr)
+	}
+	// Whatever happens inside, the mount point goes away again: the staging
+	// directory belongs to this run.
+	defer func() {
+		// Read-only first, then detached: a remount alone leaves the boot
+		// partition mounted, which makes the next install refuse (it must not
+		// write under a live mount) and keeps the FAT writable for no reason.
+		logf("flash: remounting %s read-only", dir)
+		if err := mount(dir, "", "remount,ro"); err != nil {
+			logf("flash: remount read-only failed: %v", err)
+		}
+		logf("flash: unmounting %s", dir)
+		if err := req.umountFunc()(dir); err != nil {
+			logf("flash: unmounting %s failed: %v (it stays mounted until the reboot)", dir, err)
+		}
+		os.Remove(dir)
+	}()
+	return fn(dir)
+}
+
+// mountRoot is where the boot partition is mounted for the staging: /run is a
+// tmpfs on every image. A process that cannot write there (a test, an
+// unprivileged run) gets a private directory instead: the staging is not
+// less correct, and the target is the only thing that matters.
+func mountRoot() string {
+	if d, err := os.MkdirTemp("/run", "wat-stage-*"); err == nil {
+		return filepath.Dir(d)
+	}
+	return os.TempDir()
+}
+
+// dataDir is where the files that make the device itself are read from.
+func (r Request) dataDir() string {
+	if r.DataDir != "" {
+		return r.DataDir
+	}
+	return "/data"
+}
+
+// stageFunc is what runs inside the writable window on the target's boot
+// partition: the files into MigrateDir, then the marker listing them, last.
+// The request's own Stage wins (a test).
+func (r Request) stageFunc(m Marker) func(dir string) (Stage, error) {
+	if r.Stage != nil {
+		return r.Stage
+	}
+	return func(dir string) (Stage, error) {
+		st, err := stageFiles(r.dataDir(), filepath.Join(dir, MigrateDir), MigrateFiles,
+			freeSpace(dir), blockSize(dir), r.logf())
+		if err != nil || len(st.Files) == 0 {
+			return st, err
+		}
+		// Only with files behind it: S01data copies from the staged
+		// directory and deletes the marker afterwards, so a marker with
+		// nothing staged would be a first boot that copies nothing.
+		m.Files = st.Files
+		if err := WriteMarker(dir, m, nil); err != nil {
+			return st, err
+		}
+		return st, nil
+	}
+}
+
+// rereadFunc re-reads the partition table after the clone: the kernel still
+// holds the table the target had before, whose offsets no longer match what
+// was just written, so mounting <disk>p1 reads the old layout (on the board
+// that is EINVAL). partx -u is in the image (S01data uses it).
+func (r Request) rereadFunc() func(disk string) error {
+	if r.RereadFunc != nil {
+		return r.RereadFunc
+	}
+	return func(disk string) error {
+		out, err := exec.Command("partx", "-u", disk).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("partx -u %s: %w: %s", disk, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+}
+
+// umountFunc detaches the staging mount: the request's own, or unmount(2).
+func (r Request) umountFunc() func(dir string) error {
+	if r.UmountFunc != nil {
+		return r.UmountFunc
+	}
+	return unmount
+}
+
+// logf is the install's log sink: the request's own, or silence.
+func (r Request) logf() func(string, ...any) {
+	if r.Logf != nil {
+		return r.Logf
+	}
+	return func(string, ...any) {}
+}
+
+// mountFunc is the mount the staging uses: the request's own, or mount(8).
+func (r Request) mountFunc() func(src, dir, opts string) error {
+	if r.MountFunc != nil {
+		return r.MountFunc
+	}
+	return func(src, dir, opts string) error {
+		args := []string{"-o", opts}
+		target := dir
+		if dir == "" {
+			// The remount form: MountFunc(dir, "", "remount,ro"), as the
+			// interface above documents and the staging cleanup uses. mount(8)
+			// wants `mount -o remount,ro <dir>` with no second argument, so
+			// passing both was an EINVAL ("No such file or directory") that
+			// left the boot partition mounted read-write.
+			target = src
+		} else if src != "" {
+			args = append(args, src)
+		}
+		out, err := exec.Command("mount", append(args, target)...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("mount -o %s %s %s: %w: %s", opts, src, dir, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
 }
 
 // deviceSize is the size of a block device or file (0 when unknown).

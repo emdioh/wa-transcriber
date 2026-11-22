@@ -895,9 +895,15 @@ partition work. Hardware: a BBB and one SD card.
    image to the eMMC: MLO/U-Boot, boot partition, root slot, and a fresh DATA
    partition — read from the SD card, nothing downloaded, so it works
    offline.
-3. **`/data` migration**: create DATA on the eMMC, then copy `config.json`,
-   `session.db*` and `wifi.json` from the running `/data` (reuse the M9
-   snapshot code) so the device stays paired, then verify with sha256.
+3. **`/data` migration**: during the install, stage `config.json`,
+   `session.db*` and `wifi.json` from the running `/data` into
+   `wat-migrate.d/` on the target's boot partition (free space checked first;
+   if they do not fit the clone still completes and says the device will boot
+   unpaired), then write `wat-migrate` last. On the first boot from the eMMC,
+   `S01data` creates DATA and copies the staged files into it with temp name,
+   fsync and rename. *Not* by naming the card's DATA partition: the first eMMC
+   boot is the one after the card was removed, so that device is never there
+   (the old `from` line is still read, but nothing depends on it).
 4. **Verify before declaring success**: read the written regions back and
    compare against the card before saying "remove the SD and reboot". On a
    mismatch the eMMC is simply not bootable yet and the card still is — that

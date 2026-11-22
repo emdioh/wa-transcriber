@@ -22,8 +22,11 @@ type Target struct {
 	Device string
 	// Size is the disk size in bytes, 0 when it could not be read.
 	Size int64
-	// Removable is the sysfs flag that told the disks apart (0 on the
-	// eMMC, 1 on the SD slot).
+	// Removable is the sysfs flag of the disk, reported as the refusal line
+	// shows it. It is *not* what tells the SD slot from the eMMC on the
+	// BeagleBone Black: both report 0 there (OMAP's mmc driver does not mark
+	// the SD slot removable), so device/type == "MMC" plus "not the running
+	// disk" is what decides (see disks).
 	Removable bool
 	// Running is the disk the running root came from, for the log line.
 	Running string
@@ -91,10 +94,19 @@ func (s Sys) root() string {
 }
 
 // Target finds the internal flash by rule: the parent disk of
-// <SysBlock>/* whose <disk>/device/type is MMC, whose <disk>/removable is 0,
-// that is not the disk the running root is on, and that is at least Need
-// bytes big. It refuses when there is none (ErrNoTarget) or more than one,
-// and the error lists every disk it looked at.
+// <SysBlock>/* whose <disk>/device/type is MMC, that is not the disk the
+// running root is on, and that is at least Need bytes big.
+//
+// The device type is the primary discriminator. The removable flag is not: on
+// the BeagleBone Black both the SD slot and the eMMC report removable=0, so a
+// rule that leaned on it would see two identical candidates (or, worse, pick
+// the card). The running disk is excluded by device number, which works on
+// every board; the removable flag is only a last resort for a disk of type
+// MMC that is neither the root nor a real eMMC, and it is what the refusal
+// line prints beside the type so the owner can see what was found.
+//
+// It refuses when there is none (ErrNoTarget) or more than one, and the error
+// lists every disk it looked at.
 //
 // It never returns an error and a target at the same time: an identity that
 // is a guess is refused, because the next step writes a whole disk.

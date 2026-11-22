@@ -10,23 +10,36 @@ import (
 
 // The migration marker: a small file on the boot partition of the *target*
 // that tells the first boot on the internal storage where the device's state
-// is. S01data creates and mounts DATA on the new disk, then, if the marker is
-// there, mounts the partition it names read-only and copies the files it
-// lists into the new /data before deleting the marker.
+// is. The files themselves are staged next to it, in MigrateDir, *on the
+// target*: the card they come from is not there any more when that boot
+// happens (the AM335x ROM boots the SD whenever one is inserted, so the first
+// eMMC boot is the one after the owner took the card out), and a marker that
+// named a partition of the card would point at a device that does not exist.
 //
-// A one-line format on purpose — it is read by a 40-line shell script in
-// init, on a FAT filesystem, before there is a shell to debug it with:
+// S01data creates and mounts DATA on the new disk, then, if the marker is
+// there, copies the staged files from MigrateDir into the new /data before
+// deleting the marker and the directory.
+//
+// A one-line format on purpose — it is read by a shell script in init, on a
+// FAT filesystem, before there is a shell to debug it with:
 //
 //	wat-migrate 1
-//	from /dev/mmcblk0p4
 //	file config.json
 //	file session.db
 //	file session.db-wal
 //	file session.db-shm
 //	file wifi.json
+//
+// The optional "from <device>" line (the old format, still read) names the
+// DATA partition of the card instead; its files are copied from there when
+// nothing was staged.
 const (
 	// MarkerName is the file on the boot partition (so /boot/wat-migrate).
 	MarkerName = "wat-migrate"
+	// MigrateDir is the directory on the same boot partition that holds the
+	// staged files, name for name as they are listed (so
+	// /boot/wat-migrate.d/config.json).
+	MigrateDir = "wat-migrate.d"
 	markerHead = "wat-migrate 1"
 )
 
@@ -38,17 +51,21 @@ const (
 // binary rollback but is part of an install.
 var MigrateFiles = []string{"config.json", "session.db", "session.db-wal", "session.db-shm", "wifi.json"}
 
-// Marker is what /boot/wat-migrate says: the DATA partition of the card the
-// device was cloned from, and which files to carry over.
+// Marker is what /boot/wat-migrate says: which files to carry over to the
+// new /data, and, for the old format only, the card's DATA partition.
 type Marker struct {
 	// From is the device of the old DATA partition, e.g. /dev/mmcblk0p4.
+	// Empty when the files are staged on the target's boot partition, which
+	// is what an install does: the card is not there on the first eMMC boot.
 	From  string
 	Files []string
 }
 
 // NewMarker builds the marker for a clone from sourceDisk (e.g. mmcblk0):
 // DATA is partition 4 of the card layout (D18), and the file list is
-// MigrateFiles.
+// MigrateFiles. The "from" line is informational — the files an install
+// stages in MigrateDir are what S01data copies — and empty when the source
+// disk cannot be turned into a partition device.
 func NewMarker(sourceDisk string) Marker {
 	from := ""
 	if dev := partitionDev(sourceDisk, 4); dev != "" {
@@ -77,13 +94,15 @@ func (m Marker) Encode() []byte {
 // It is written last, after the clone has read back clean, and it is written
 // atomically (temp file, fsync, rename, fsync directory) like every other
 // file whose absence or presence matters after a power cut: a marker that is
-// there means "copy /data from the card", and it must not be a half line.
+// there means "copy /data from what is staged", and it must not be a half
+// line. Files it lists that were not staged are copied from the device in its
+// "from" line by S01data, so a marker always names at least one source.
 func WriteMarker(bootDir string, m Marker, withBootRW func() (func() error, error)) error {
 	if bootDir == "" {
 		return errors.New("flash: no boot directory for the migration marker")
 	}
-	if m.From == "" {
-		return errors.New("flash: the migration marker has no source partition")
+	if len(m.Files) == 0 {
+		return errors.New("flash: the migration marker lists no file to copy")
 	}
 	unlock := func() error { return nil }
 	if withBootRW != nil {
@@ -121,9 +140,12 @@ func ReadMarker(bootDir string) (*Marker, error) {
 
 // parseMarker accepts the format Encode writes and skips anything else, so a
 // marker from a newer version degrades to a partial file list instead of a
-// boot that stops at init.
+// boot that stops at init. A "from" line is optional — a marker whose files
+// were staged on the boot partition does not need one — but a marker that
+// names neither a file nor a source is an error.
 func parseMarker(s string) (*Marker, error) {
 	m := &Marker{}
+	named := 0 // file lines seen, safe or not: a marker with only unsafe names is not "half a line"
 	for _, line := range strings.Split(s, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || line == markerHead {
@@ -133,12 +155,15 @@ func parseMarker(s string) (*Marker, error) {
 			m.From = v
 			continue
 		}
-		if v, ok := strings.CutPrefix(line, "file "); ok && safeName(v) {
-			m.Files = append(m.Files, v)
+		if v, ok := strings.CutPrefix(line, "file "); ok {
+			named++
+			if safeName(v) {
+				m.Files = append(m.Files, v)
+			}
 		}
 	}
-	if m.From == "" {
-		return nil, errors.New("flash: " + MarkerName + " names no source partition")
+	if named == 0 && m.From == "" {
+		return nil, errors.New("flash: " + MarkerName + " names nothing to copy")
 	}
 	return m, nil
 }
