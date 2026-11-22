@@ -20,6 +20,48 @@
   </form>
   <p>The language of the WhatsApp replies. The web UI stays in English.</p>
 </section>
+{{with .Update}}
+<section class="card">
+  <h2>Software</h2>
+  <dl>
+    <dt>Version</dt><dd><code>{{.Status.Current}}</code></dd>
+    {{if .Checked}}<dt>Last check</dt><dd>{{.Checked}}</dd>{{end}}
+    <dt>Found</dt><dd>{{if .Status.Available}}<strong>{{.Status.Available}}</strong> is available{{if .Status.NotesURL}} · <a href="{{.Status.NotesURL}}" target="_blank" rel="noopener">release notes</a>{{end}}{{else}}no new version{{end}}</dd>
+    {{if .Status.Installed}}<dt>Installed</dt><dd>{{.Status.Installed}} — waiting for the restart</dd>{{end}}
+  </dl>
+  {{with .Status.LastFailure}}<p class="flash err" role="status">⚠ {{.}}</p>{{end}}
+  <form method="post" action="/system/update/check" class="row">
+    <button class="secondary">Check for updates</button>
+  </form>
+	<p class="muted">Checks the GitHub releases and verifies the signature: no account, no token. With <em>daily</em> the device checks once a day by itself; never while the setup access point is running.</p>
+  <form method="post" action="/system/update/settings" class="stack">
+    <label>Automatic check
+      {{$sel := .UpdateCheck}}
+      <select name="update_check">
+        {{range .UpdateChecks}}<option value="{{.}}" {{if eq . $sel}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" name="update_auto" value="1" {{if .UpdateAuto}}checked{{end}}> Install a new version without asking: the device downloads it, restarts itself and rolls back if the new version does not come up. Never while a voice note is queued or transcribing.</label>
+	  <button class="secondary">Save update settings</button>
+  </form>
+  {{with .CheckEnv}}<p class="muted">Automatic checks are set by {{.}}, so this choice is read-only.</p>{{end}}
+  {{with .AutoEnv}}<p class="muted">Install without asking is set by {{.}}.</p>{{end}}
+  {{if .Status.Available}}
+  <form method="post" action="/system/update/install" class="stack">
+    <label class="check"><input type="checkbox" name="confirm" value="yes" required> Install {{.Status.Available}} and restart</label>
+    <button>Install and restart</button>
+  </form>
+  <p class="muted">The device restarts after installing: reload this page in about {{.ReloadSecs}} seconds. A voice note being transcribed right now loses its reply.</p>
+  {{end}}
+  {{if .Status.CanRollback}}
+  <form method="post" action="/system/update/rollback" class="stack">
+    <label class="check"><input type="checkbox" name="confirm" value="yes" required> Go back to {{.Status.RollbackTo}}</label>
+    <button class="secondary">Back to {{.Status.RollbackTo}}</button>
+  </form>
+  <p class="muted">Goes back to the previous version and restores the settings and the WhatsApp session saved before the update. Messages that arrived in between are lost. The device restarts: reload this page in about {{.ReloadSecs}} seconds.</p>
+  {{end}}
+</section>
+{{end}}
 <section class="card danger">
   <h2>Factory reset</h2>
   <p>Unlinks WhatsApp and erases every setting, the password and the saved WiFi networks. The device restarts in setup mode. Same as <code>!reset</code>.</p>

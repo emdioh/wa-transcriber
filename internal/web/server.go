@@ -84,6 +84,12 @@ type Options struct {
 	// InAPMode reports whether the setup access point is running. Captive
 	// portal responses and the Host redirect are only active then.
 	InAPMode func() bool
+	// Updater drives the Software card on the System page; nil (Docker, dev
+	// machines, no update key) hides the card completely (M9, D17).
+	Updater Updater
+	// Restart re-execs the process after an install or a rollback (main logs
+	// its own failure).
+	Restart func()
 }
 
 // Server serves the UI.

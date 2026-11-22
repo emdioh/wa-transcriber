@@ -58,6 +58,12 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /system/password", s.auth(s.changePassword))
 	m.HandleFunc("POST /system/language", s.auth(s.changeLanguage))
 	m.HandleFunc("POST /system/reset", s.auth(s.reset))
+	// The update routes answer 404 when Options.Updater is nil, so a binary
+	// without the feature gives nothing away.
+	m.HandleFunc("POST /system/update/check", s.auth(s.updateCheck))
+	m.HandleFunc("POST /system/update/install", s.auth(s.updateInstall))
+	m.HandleFunc("POST /system/update/rollback", s.auth(s.updateRollback))
+	m.HandleFunc("POST /system/update/settings", s.auth(s.updateSettings))
 }
 
 // -- setup / login ----------------------------------------------------------
@@ -759,13 +765,17 @@ type systemView struct {
 	MinPasswordLen int
 	Languages      []string
 	Language       string
+	// Update is nil when the binary update feature is off: no card at all.
+	Update *updateView
 }
 
 func (s *Server) systemPage(w http.ResponseWriter, r *http.Request) {
+	update, _ := s.updatePageView(r.Context())
 	s.render(w, r, "system", "System", systemView{
 		MinPasswordLen: MinPasswordLen,
 		Languages:      config.Languages,
 		Language:       config.NormalizeLanguage(s.opts.Config.Get().Language),
+		Update:         update,
 	})
 }
 

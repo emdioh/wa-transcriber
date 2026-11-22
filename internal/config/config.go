@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 )
 
@@ -24,10 +25,24 @@ type Config struct {
 	PublicURL string `json:"public_url,omitempty"`
 	// Language is the language of the bot's WhatsApp replies ("en", "it").
 	Language string `json:"language,omitempty"`
+	// UpdateCheck is the automatic binary update check: off or daily (M9).
+	UpdateCheck string `json:"update_check,omitempty"`
+	// UpdateAuto installs a found update without asking (still behind the
+	// health gate and never while a note is queued or transcribing).
+	UpdateAuto bool `json:"update_auto,omitempty"`
 }
 
 // DefaultLanguage is used when Language is empty or unknown.
 const DefaultLanguage = "en"
+
+// Update check intervals, in menu order. Empty/unknown means Off.
+const (
+	UpdateCheckOff   = "off"
+	UpdateCheckDaily = "daily"
+)
+
+// UpdateChecks are the supported values of Config.UpdateCheck.
+var UpdateChecks = []string{UpdateCheckOff, UpdateCheckDaily}
 
 // Languages are the supported bot reply languages, in menu order.
 var Languages = []string{"en", "it"}
@@ -40,6 +55,17 @@ func NormalizeLanguage(lang string) string {
 		}
 	}
 	return DefaultLanguage
+}
+
+// NormalizeUpdateCheck returns check when supported, UpdateCheckOff
+// otherwise, so an empty field (files written before M9) means off.
+func NormalizeUpdateCheck(check string) string {
+	for _, c := range UpdateChecks {
+		if check == c {
+			return check
+		}
+	}
+	return UpdateCheckOff
 }
 
 // Transcription settings.
@@ -72,6 +98,50 @@ func (c Config) clone() Config {
 	c.Transcription.Chats = maps.Clone(c.Transcription.Chats)
 	c.Transcription.KeepLanguages = slices.Clone(c.Transcription.KeepLanguages)
 	return c
+}
+
+// envFields maps config.json field names to the variable overriding them. An
+// override is read where the value is used and never written back (D10).
+var envFields = map[string]string{
+	"update_check": "WAT_UPDATE_CHECK",
+	"update_auto":  "WAT_UPDATE_AUTO",
+}
+
+// UpdateCheckMode returns the effective update check (WAT_UPDATE_CHECK, else
+// config.json): UpdateCheckOff or UpdateCheckDaily.
+func (c Config) UpdateCheckMode(getenv func(string) string) string {
+	if v := strings.TrimSpace(envValue(getenv, "WAT_UPDATE_CHECK")); v != "" {
+		return NormalizeUpdateCheck(strings.ToLower(v))
+	}
+	return NormalizeUpdateCheck(c.UpdateCheck)
+}
+
+// UpdateAutoOn returns the effective install-without-asking setting
+// (WAT_UPDATE_AUTO=1/true, else config.json).
+func (c Config) UpdateAutoOn(getenv func(string) string) bool {
+	if v := strings.ToLower(strings.TrimSpace(envValue(getenv, "WAT_UPDATE_AUTO"))); v != "" {
+		return v == "1" || v == "true"
+	}
+	return c.UpdateAuto
+}
+
+// EnvOverrides returns field -> variable name for the update fields
+// currently set by the environment (the web UI shows them read-only).
+func EnvOverrides(getenv func(string) string) map[string]string {
+	out := map[string]string{}
+	for field, env := range envFields {
+		if strings.TrimSpace(envValue(getenv, env)) != "" {
+			out[field] = env
+		}
+	}
+	return out
+}
+
+func envValue(getenv func(string) string, name string) string {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	return getenv(name)
 }
 
 // Effective tells whether auto-transcription is on for a chat. keys are the
@@ -113,6 +183,9 @@ func Open(path string) (*Store, error) {
 	}
 	if err := json.Unmarshal(data, &s.cur); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if s.cur.UpdateCheck != "" && NormalizeUpdateCheck(s.cur.UpdateCheck) != s.cur.UpdateCheck {
+		return nil, fmt.Errorf("parse %s: unknown update_check %q (off or daily)", path, s.cur.UpdateCheck)
 	}
 	return s, nil
 }
