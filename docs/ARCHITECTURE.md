@@ -375,3 +375,41 @@ and the health timer, nothing else: the binary update is a file on `/data`,
 the image update is a block device. M11 adds the install of the whole card to
 the BeagleBone Black's eMMC, which is the same layout written from one device
 to another instead of over the network.
+
+**Install to the internal storage (M11).** `wa-transcriber -flash /dev/mmcblk1`
+(confirmed with `-flash-confirm mmcblk1`) and the System page's "Internal
+storage" card behind the typed device name do the same thing, and they need
+no network: the card *is* the image. The target is found by rule, never by
+guess — the parent disk of `/sys/class/block/*` whose `device/type` is `MMC`,
+whose `removable` is 0, that is not the disk the running root came from
+(matched by device number, as `FindSlots` does) and that covers the bytes to
+be written; zero candidates is "no internal storage" (the Pi 2's one line),
+two or more is a refusal that lists what was seen, and a device the owner
+names has to pass the same checks. What is copied is the MBR and the three
+system partitions — p1 boot (MLO/U-Boot, kernel, boot file, `wat.txt`), p2
+root A, p3 root B — each at the offset it already has, because the partition
+table is copied with them; DATA is *not* cloned (it is created on the new disk
+by `S01data` as on a fresh card and filled from the marker), and nothing after
+p3 is written, so a 400 MB card fits a 4 GB eMMC. Every region is hashed while
+it is read and again as it is written, the write is fsynced, and then the
+destination is read back and both sides re-hashed before anything says
+"remove the card and reboot": a read-back that differs is the one check that
+separates "the internal storage holds a copy" from "it will boot", and an
+eMMC that silently wrote different bytes would only be found at the next power
+on otherwise. No success is reported for a partial copy: a cancelled or failed
+clone names the region that was not written, leaves the card untouched (the
+only write to it is the marker, and only after the read-back) and the target
+half-written — not bootable yet — and running it again completes it, since
+every byte is a copy. The card is also the recovery path: the AM335x ROM boots
+from the SD card when one is inserted, so the device keeps working whatever
+state the eMMC is in. Last, `wat-migrate` is written atomically on the copied
+boot partition: one line naming the card's DATA partition (`from
+/dev/mmcblk0p4`) and one `file` line per file that makes the device itself
+(`config.json`, `session.db` with `-wal`/`-shm`, `wifi.json`). On the first
+start from the eMMC, after `S01data` has created and mounted the new DATA, the
+script mounts that partition read-only, copies each listed file to a temp name
+in `/data`, fsyncs and renames it, and deletes the marker only when all of them
+are in — so a power cut at any point leaves the marker in place and the next
+boot copies everything again onto identical files, and the source is never
+written. Without the marker the device boots unpaired, which is the only cost
+of an interrupted migration and not of an interrupted clone.

@@ -127,6 +127,17 @@ grep -q 'wa-transcriber -data /data .*-update-dir /data/bin' "$OVL/etc/inittab" 
 	fail "inittab does not pass -update-dir /data/bin (binary self-updates are off)"
 grep -q 'wa-transcriber -data /data .*-bootstrap /usr/bin/wa-transcriber' "$OVL/etc/inittab" ||
 	fail "inittab does not pass -bootstrap /usr/bin/wa-transcriber (a restart would skip the boot gate)"
+# Image updates (D18): off unless init says where the state lives, and each
+# board has to describe its own boot file and slots or nothing can switch.
+grep -q 'wa-transcriber -data /data .*-image-update /data' "$OVL/etc/inittab" ||
+	fail "inittab does not pass -image-update /data (image updates are off)"
+for board in bbb:beagle:/boot/extlinux/extlinux.conf rpi2:rpi2:/boot/cmdline.txt; do
+	dir=${board%%:*}; rest=${board#*:}; name=${rest%%:*}; boot=${rest#*:}
+	grep -q '"boot_file": "'"$boot"'"' "$HERE/board/$dir/post-build.sh" ||
+		fail "board/$dir/post-build.sh does not write etc/wat/image.json with boot_file $boot"
+	grep -q '"board": "'"$name"'"' "$HERE/board/$dir/post-build.sh" ||
+		fail "board/$dir/post-build.sh does not name the manifest board $name"
+done
 grep -q 'sysinit:/etc/init.d/rcS' "$OVL/etc/inittab" ||
 	fail "inittab does not run rcS"
 grep -q '^LABEL=DATA' "$OVL/etc/fstab" || fail "fstab does not mount the DATA partition"

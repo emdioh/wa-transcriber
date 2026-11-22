@@ -819,8 +819,13 @@ image update is in place.
 - **Health gate, same shape as M9**: starting a slot that has not confirmed
   itself bumps a counter; the running system confirms after 60 s (reuse the
   existing timer) and clears it; three unconfirmed starts fall back to the
-  other slot. The counter must be readable *and writable* by the bootloader,
-  so it lives next to the slot choice in the FAT boot partition.
+  other slot. What is implemented counts starts **in userspace** and rewrites
+  the boot file back, so it covers an image that boots but whose app never
+  becomes healthy — the realistic failure of an image update. A kernel or an
+  init that never reaches userspace needs the U-Boot `bootcount`
+  (`BOOTCOUNT_LIMIT`, `ENV_IS_IN_FAT` and `bootlimit` are already in the
+  image's U-Boot, `bootlimit` is 0), which can only be proven by flashing and
+  is tracked as its own step (wat-kfd.6).
 - **Manifest**: `manifest.json` gains `images: {beagle: {...}, rpi2: {...}}`
   with file, sha256, size and the **layout version** it requires. Same key,
   same signature. A device still on the old table prints "reflash once to
@@ -843,6 +848,12 @@ image update is in place.
    default and never while a note is queued.
 5. **Release**: the workflow attaches both board images, `wat-manifest` writes
    the `images` block, README/ARCHITECTURE updated.
+6. **U-Boot bootcounter** (needs the console, after the first flash with the
+   two-slot layout): `bootlimit=3` + `altbootcmd` in the environment, the
+   updater setting `upgrade_available` and clearing it from the 60 s health
+   timer with `fw_setenv` (uboot-tools), so a kernel that never reaches
+   userspace also falls back. Verify by flashing a slot with a kernel that
+   panics, not by reading the manual.
 
 ### Exit criteria
 
@@ -851,8 +862,10 @@ image update is in place.
   is still bootable and can be selected back.
 - Power cut 10× at random points (during the write, after the flip, before
   the confirmation) → always comes up on a working slot.
-- A deliberately broken image (init exits) → automatic fallback after three
-  unconfirmed boots.
+- An image whose app never becomes healthy (init starts but the binary exits)
+  → the userspace gate rewrites the boot file back and reboots into the old
+  slot after three unconfirmed starts. A kernel that never mounts the root
+  needs step 6 and its own power-cut test.
 - An old-layout device refuses with one line, never downloads.
 - Free space checked against the image size before the download starts.
 

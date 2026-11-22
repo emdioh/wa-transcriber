@@ -17,4 +17,11 @@ cp "$BOARD_DIR/config.txt" "$BINARIES_DIR/config.txt"
 # wat.txt: first-boot settings, editable from any computer (FAT partition).
 cp "$COMMON_DIR/wat.txt" "$BINARIES_DIR/wat.txt"
 
+# The A/B layout of this board (D18): cmdline.txt names the root, and the two
+# partitions that can hold it are on the same card.
+mkdir -p "$1/etc/wat"
+cat > "$1/etc/wat/image.json" <<'EOF'
+{"board": "rpi2", "boot_file": "/boot/cmdline.txt", "slots": ["p2", "p3"]}
+EOF
+
 exec "$COMMON_DIR/post-build.sh" "$@"

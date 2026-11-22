@@ -40,6 +40,11 @@ Remaining work (details and exit criteria in [docs/PLAN.md](docs/PLAN.md)):
 7. **M9** binary updates from GitHub releases (D17): the code is in; what is
    left is the signing keypair (wat-t3l.5), the field test on both boards
    (wat-t3l.6) and the `!update` command (wat-t3l.7).
+8. **M10** image updates with two root slots (D18): code and images done;
+   needs the owner's reflash, the field test, and the U-Boot bootcounter for a
+   kernel that never boots (wat-kfd.6).
+9. **M11** install the SD card onto the BeagleBone Black eMMC: code done
+   (`-flash`, System card, `wat-migrate`), the eMMC write itself untested.
 
 A rootless Podman container from the verification run may still be around
 (`podman ps -a`, container `wat`, volume `wat-data`); it is disposable. It
