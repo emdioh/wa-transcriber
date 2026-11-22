@@ -50,6 +50,7 @@ v1, several WhatsApp accounts per device, Internet exposure of the UI.
 | D14 | **Multi-transcriber coordination through invisible protocol fields** (empty reaction as claim, tag in the reply) | Visible bot messages, profile "About" text, push name | End-to-end encryption means the server cannot strip extra fields; official clients ignore them. Must be verified first (milestone 2). |
 | D15 | **Plain HTTP** for the UI | Self-signed TLS | The device has no domain for a real certificate; self-signed TLS trains users to click through warnings. Acceptable on a home LAN / WPA2 setup AP; the UI must not be exposed to the Internet. |
 | D16 | **A carrier loss never touches the interface address**, and neither does a DHCP rebind: the rootfs overlay ships its own idempotent udhcpc script, and flushing is an explicit `Ethernet.Flush` teardown | Flush on carrier down (M5 as first designed); keep the stock script and pass `udhcpc -R` | Flushing the address on a carrier blip kills the WhatsApp websocket, in-flight uploads and mDNS sockets — and the boards flap right after boot (wat-f2z.9). The destructiveness is in the *script*, not in a client flag: busybox `udhcpc` runs it with `deconfig` before every attempt, and Buildroot's version does `ifconfig $interface 0.0.0.0` there and `ifconfig $interface $ip …` on `bound` — both drop the address. `-R` is worse, not better: it means "release IP on exit", so it runs `deconfig` again on the way out. Our script no-ops on `deconfig` and uses `ip addr replace` (a netlink no-op for an identical address) on `bound`/`renew`; the overlay is rsynced after packages, so it replaces the stock file. |
+| D17 | **Binary updates from GitHub releases, executed from `/data/bin` with three slots (active / previous / pending) and the read-only factory binary as the bootstrap** | Remounting the rootfs rw and overwriting `/usr/bin/wa-transcriber`; full A/B image updates (RAUC, swupdate); a Docker self-update | A running executable cannot be replaced anyway, and the rootfs is read-only by design (D13). Keeping the runtime binary on `/data` makes an update one file write plus one `exec`: no partition, bootloader or image work, and the factory binary on the read-only root can never be damaged by a failed update. Three slots (current, previous, next) is the most a small card needs for rollback; a try counter in `state.json` turns a crash loop into an automatic rollback. Docker is out on purpose: the scratch image has nothing to exec from a volume. Full-image updates wait for a second root slot. |
 
 ## 3. Process layout
 
@@ -292,3 +293,71 @@ Behaviour:
 History sync is reduced to the minimum at pairing and its blobs are never
 downloaded (`ManualHistorySyncDownload`), which keeps pairing light on
 128 MB boards.
+
+## 11. Binary updates (milestone 9, boards only)
+
+Scope: the *binary*, not the OS image. Docker is explicitly out — the image
+is `scratch` and `/wa-transcriber` is immutable, so there the update directory
+is unset (the feature is off) and the UI says "pull the image". Full-image
+updates need a second root slot plus `swupdate`/RAUC: later, and they force a
+card reflash because the partition table changes.
+
+```text
+/usr/bin/wa-transcriber          factory binary, read-only rootfs, the bootstrap
+/data/bin/state.json             slots + try counter + last failure
+/data/bin/wa-transcriber-<ver>   at most three files: active, previous, pending
+/data/updates/*.part             transient download, deleted at boot
+/data/rollback/<ver>/            config.json + session.db snapshot before a first start
+```
+
+`inittab` starts the *factory* binary; before anything else `main` runs the
+bootstrap (`-update-dir`, empty = feature off; `-version` and `-healthcheck`
+skip it):
+
+1. `pending` present and its hash matches → promote (`previous = active`,
+   `active = pending`, delete the file of the slot that fell out of the
+   window), `tries = 0`, `verified = false`, then exec it.
+2. else `active` → if its hash fails or `tries > 3`, roll back to `previous`
+   (and restore the `/data/rollback` snapshot), record `last_failure`, exec
+   that; otherwise `tries++` and exec it. A verified `active` is never
+   counted.
+3. else run the factory binary (fresh card, wiped `/data`, bottom of a
+   rollback).
+
+A newer factory binary (card reflashed, `/data` kept) wins over an older
+active one, so a flash is always an upgrade; the reverse is never a silent
+downgrade. Restart is `syscall.Exec(<bootstrap path>)`, the same mechanism as
+`!reset` (D11) — not `os.Executable()`, which would be the `/data` file and
+skip the gate, and not `exit`+`respawn`, which busybox throttles (wat-f2z.16).
+Exec of a non-executable or wrong-arch file fails *in the old process*, so
+that case falls back without a single crash.
+
+Health: the running process sets `verified` and resets `tries` after 60 s of
+uptime, not at start, so a process that dies immediately still trips the gate.
+A version that starts but misbehaves (WhatsApp refuses the migrated
+`session.db`) is reverted by hand from the UI.
+
+`session.db` moves with the binary: whatsmeow migrates it on first start and
+an older version may refuse the newer schema, so the outgoing binary copies
+`config.json` + `session.db` to `/data/rollback/<version>/` before the first
+exec of a new one, and a rollback restores it (losing what arrived in
+between).
+
+Trust chain: `manifest.json` from
+`github.com/emdioh/wa-transcriber/releases/latest/download/` (a CDN GET, no
+API rate limit, no token) plus `manifest.json.ed25519`, a detached ed25519
+signature whose public key is embedded with `-X main.updatePubKey` and kept
+in `release/update-pubkey.txt`; the private key never leaves the owner's
+machine (`tools/wat-sign`). Then: sha256 of the binary, `EM_*` match for the
+running arch, size cap, free space for one more binary. An unsigned or
+unverifiable manifest is refused. Files are written `.part` → fsync →
+rename → fsync dir → `state.json` (the `config.json` scheme, D9), so no state
+can ever point at a partial file.
+
+Retention: exactly three slots and at most three files; unreferenced
+binaries and `.part` leftovers are pruned at boot.
+
+Checks: manual (System page button, 1 h cache in memory and on disk) plus an
+opt-in daily check (`update_check`), never in setup/AP mode; `update_auto`
+installs and restarts without asking, still behind the health gate and only
+when nothing is queued or transcribing.

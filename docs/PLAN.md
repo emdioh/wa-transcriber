@@ -30,6 +30,10 @@ M5/M6 and M5b are independent tracks: M6 only needs the network-manager
 and validated on the boards in M5b. Do the tracks in whatever order the
 hardware and the test phones become available.
 
+M9 (binary updates) rides on M7's releases and M6's images: its code and tests
+need no hardware, only the field test on the boards does. Its gate out is
+v1.1, the first release whose image can update itself.
+
 ---
 
 ## Working rules (all milestones)
@@ -719,6 +723,77 @@ Runtime side (needs the boards; may be done together with M5b):
 ### Gate out
 
 Tag **v1.0**. Images attached to the release.
+
+---
+
+## M9 — Binary updates from GitHub releases (boards only)
+
+**Gate in**: M7 releases exist (the `manifest.json` asset is added there) and
+M6 images build. Code and tests need no hardware; only the field test does.
+
+**Decision**: D17 in [ARCHITECTURE.md](ARCHITECTURE.md). The unit of update
+is the **binary**. The OS image stays a reflash (it needs a second root slot
+and `swupdate`/RAUC, which changes the partition table); Docker is out, the
+scratch image has nothing to exec from a volume.
+
+### Steps
+
+1. **`internal/update`** — manifest parsing and its ed25519 signature,
+   version compare, arch/`EM_*` check, atomic download + install, the
+   three-slot state machine (promote / rollback / prune), update check with a
+   cache. Unit tests against `httptest` and temp dirs. No wiring yet.
+2. **Release side** — `manifest.json` generated in `dist/` on tags,
+   `tools/wat-keygen` + `tools/wat-sign`, `tools/wat-manifest`, the public key
+   committed as `release/update-pubkey.txt` and injected with
+   `-X main.updatePubKey` (empty = self-update compiled out), a
+   `make sign-manifest` target. The owner generates the keypair once and keeps
+   the private key offline.
+3. **Bootstrap in `main`** — `-update-dir` (env `WAT_UPDATE_DIR`, empty =
+   off), run before anything else; `restart()` execs the bootstrap path instead
+   of `os.Executable()`; `verified` after 60 s; `/data/rollback` snapshot
+   before the first exec of a new version. `inittab` passes
+   `-update-dir /data/bin`; `make -C os check` covers it.
+4. **Config and UI** — `update_check` (`off`|`daily`, default off: the opt-in
+   daily check) and `update_auto` (install and restart without asking, still
+   behind the health gate and never while a note is queued or transcribing).
+   System page card: current version, "check now", "v0.3.0 available" + notes
+   link, "install and restart", "back to v0.1.1". Strings in en/it.
+5. **Field test on the boards** (owner) — see the exit criteria.
+
+### Exit criteria
+
+Code (no hardware):
+
+- `go test -race ./...` covers promote, rollback, prune, a tampered binary, a
+  wrong-arch asset, an unsigned or badly signed manifest, a truncated
+  download, and a state file that points at a missing file; gofmt/vet clean;
+  CI green.
+- With `-update-dir` empty (Docker, dev machines) the feature is inert: no
+  network call, no card in the UI.
+
+On both boards (owner):
+
+- Update over WiFi from the current release to the next one: the device
+  restarts itself, keeps its session (no re-pairing), `!status` and the System
+  page show the new version.
+- `kill -9` during the download and during the install → the device keeps
+  running the old version, no `.part` survives the next boot, nothing broken.
+- Power cut during the install → the device boots and runs a working version
+  (old or new).
+- A deliberately broken binary (same version numbers, `return 1` in `main`) →
+  rolled back automatically after three tries, `last_failure` visible in the
+  UI, device still transcribes.
+- Manual rollback to the previous version works, and restores
+  `config.json`/`session.db`.
+- Update right after a reflash (factory binary newer than `/data`'s active
+  slot) → the newer factory binary wins.
+- At most three binaries in `/data/bin` at any time.
+
+### Gate out
+
+Ship as **v1.1**. Full-image updates (second root slot, RAUC/swupdate) become
+M10 if the owner wants them; they need a partition-table change, so they cost
+every existing device one last reflash.
 
 ---
 
