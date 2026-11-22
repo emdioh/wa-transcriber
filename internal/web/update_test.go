@@ -374,3 +374,87 @@ func TestUpdateSettingsHiddenWithoutUpdater(t *testing.T) {
 		t.Fatalf("POST with no updater = %d, want 404", code)
 	}
 }
+
+// The login page is the last resort when both the password and the phone are
+// gone: it may erase the device only while nothing is paired.
+func TestLoginPageResetOnlyWhileUnpaired(t *testing.T) {
+	h := newHarness(t)
+	h.setup() // a password exists, nothing paired
+	anon := h.newClient()
+
+	_, _, body := h.get(anon, "/login")
+	if !strings.Contains(body, `action="/reset"`) || !strings.Contains(body, "Type RESET to confirm") {
+		t.Fatalf("no reset block on the login page while unpaired:\n%s", body)
+	}
+
+	// The confirmation is required, and a wrong one changes nothing.
+	if _, _, body := h.post(anon, "/reset", url.Values{"confirm": {"yes"}}); !strings.Contains(body, "Type RESET") {
+		t.Fatalf("a missing confirmation was accepted:\n%s", body)
+	}
+	if n := h.resetCount(); n != 0 {
+		t.Fatalf("resets = %d after a bad confirmation", n)
+	}
+
+	// The real thing: it erases and restarts, like !reset. The reset runs in
+	// a goroutine after the response is flushed, so poll for it.
+	_, _, body = h.post(anon, "/reset", url.Values{"confirm": {"RESET"}})
+	if !strings.Contains(body, "Restarting") {
+		t.Fatalf("no restart page:\n%s", body)
+	}
+	for i := 0; i < 40 && h.resetCount() == 0; i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if n := h.resetCount(); n != 1 {
+		t.Fatalf("resets = %d, want one", n)
+	}
+}
+
+func TestLoginPageResetRefusedWhenPaired(t *testing.T) {
+	h := newHarness(t)
+	h.setup()
+	h.wa.paired = true
+	anon := h.newClient()
+
+	_, _, body := h.get(anon, "/login")
+	if strings.Contains(body, `action="/reset"`) {
+		t.Fatalf("the login page offers a reset on a paired device:\n%s", body)
+	}
+	// And the route itself refuses even when the form is posted by hand.
+	_, _, body = h.post(anon, "/reset", url.Values{"confirm": {"RESET"}})
+	if n := h.resetCount(); n != 0 {
+		t.Fatalf("resets = %d on a paired device", n)
+	}
+	if !strings.Contains(body, "linked to WhatsApp") {
+		t.Fatalf("the refusal does not explain the way back:\n%s", body)
+	}
+}
+
+// A device with no password is in setup mode: the login page is not the way
+// in and the reset route must not be a second one.
+func TestLoginResetWithoutPasswordGoesToSetup(t *testing.T) {
+	h := newHarness(t)
+	anon := h.newClient()
+	_, path, _ := h.post(anon, "/reset", url.Values{"confirm": {"RESET"}})
+	if path != "/setup" || h.resets != 0 {
+		t.Fatalf("reset with no password -> %s, resets = %d", path, h.resets)
+	}
+}
+
+// A foreign Origin is refused here too, like every other POST: an attacker's
+// page must not be able to trigger the reset.
+func TestLoginResetRefusesForeignOrigin(t *testing.T) {
+	h := newHarness(t)
+	h.setup()
+	anon := h.newClient()
+	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/reset", strings.NewReader("confirm=RESET"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://evil.example")
+	resp, err := anon.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden || h.resetCount() != 0 {
+		t.Fatalf("status %d, resets %d", resp.StatusCode, h.resetCount())
+	}
+}

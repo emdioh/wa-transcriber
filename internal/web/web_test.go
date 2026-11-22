@@ -89,6 +89,14 @@ func (h *harness) newClient() *http.Client {
 	return &http.Client{Jar: jar}
 }
 
+// resetCount reads the reset counter under the mutex: the reset itself runs in
+// a goroutine after the response, so a test that polls for it races otherwise.
+func (h *harness) resetCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.resets
+}
+
 func (h *harness) get(c *http.Client, path string) (int, string, string) {
 	h.t.Helper()
 	resp, err := c.Get(h.srv.URL + path)

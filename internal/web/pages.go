@@ -31,6 +31,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /setup", s.setupSubmit)
 	m.HandleFunc("GET /login", s.loginPage)
 	m.HandleFunc("POST /login", s.loginSubmit)
+	// The way back in when both the password and the phone are gone; it
+	// refuses unless the device is unpaired (see canResetWithoutPassword).
+	m.HandleFunc("POST /reset", s.resetNoPassword)
 	m.HandleFunc("POST /logout", s.logout)
 	m.HandleFunc("GET /healthz", s.healthz)
 
@@ -115,12 +118,64 @@ func checkNewPassword(pw, confirm string) string {
 	return ""
 }
 
+// loginView is the login page: where to go after logging in, and whether the
+// last-resort reset is offered.
+type loginView struct {
+	Next string
+	// CanReset is true only while the device is not linked to WhatsApp. With a
+	// phone linked, !reset in the owner's chat is the way back in and the LAN
+	// must not be able to erase the device over the login page.
+	CanReset bool
+}
+
+// canResetWithoutPassword reports whether the login page may offer to erase
+// everything: a password is set (otherwise the setup page is the way in) and
+// the device is not paired, which is the state every lockout ends in — an
+// unlink, a factory reset from the phone, or a lost phone all leave it
+// unpaired. Paired() reads the session store, not the connection, so this does
+// not depend on WhatsApp being reachable.
+func (s *Server) canResetWithoutPassword() bool {
+	if s.opts.Config.Get().Web.PasswordHash == "" {
+		return false
+	}
+	return s.opts.WA == nil || !s.opts.WA.Paired()
+}
+
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 	if s.opts.Config.Get().Web.PasswordHash == "" {
 		s.redirect(w, r, "/setup")
 		return
 	}
-	s.render(w, r, "login", "Log in", localPath(r.URL.Query().Get("next")))
+	s.render(w, r, "login", "Log in", loginView{
+		Next:     localPath(r.URL.Query().Get("next")),
+		CanReset: s.canResetWithoutPassword(),
+	})
+}
+
+// resetNoPassword is the last resort of the login page: the password is lost
+// and WhatsApp is not paired, so neither the UI nor !reset can get in. It is
+// deliberately unauthenticated and deliberately narrow: it exists only while
+// the device is unpaired (canResetWithoutPassword), it needs the typed
+// confirmation like the authenticated one, it is logged at WARN, and it does
+// what !reset does: unlink, erase the settings and the password, restart into
+// setup mode.
+func (s *Server) resetNoPassword(w http.ResponseWriter, r *http.Request) {
+	if !s.canResetWithoutPassword() {
+		if s.opts.WA != nil && s.opts.WA.Paired() {
+			s.back(w, r, "/login", false,
+				"The device is linked to WhatsApp: send !password or !reset in your own chat instead.")
+			return
+		}
+		s.redirect(w, r, "/setup")
+		return
+	}
+	if r.PostFormValue("confirm") != "RESET" {
+		s.back(w, r, "/login", false, "Type RESET to confirm.")
+		return
+	}
+	s.opts.Log.Warn("factory reset from the login page: no password and not linked to WhatsApp")
+	s.endSession(w, r)
+	s.restartPage(w, r, "Factory reset", "/setup", s.opts.Reset)
 }
 
 func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {

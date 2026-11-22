@@ -156,6 +156,19 @@ groups keys of the same chat into one row (`wa.CanonicalChat`).
     out);
   - failed logins serialised with a 1 s delay;
   - POSTs with a foreign `Origin`/`Referer` are refused (403);
+  - **the login page can erase the device, but only while nothing is paired.**
+    Losing the password *and* the phone left no way in at all: `!password`
+    and `!reset` need the chat, the UI needs the password. `POST /reset`
+    (unauthenticated) closes that hole and is deliberately narrow: it is
+    offered and accepted only when the device is not linked (`WA.Paired()`,
+    read from the session store, so it does not depend on WhatsApp being
+    reachable), it requires the typed `RESET` like the authenticated one, it
+    is logged at WARN, and it does what `!reset` does. On a *linked* device
+    the page does not render it and the route answers "send !password or
+    !reset in your own chat", so nobody on the LAN can erase a working
+    device; every lockout ends unlinked (an unlink, a reset from the phone or
+    a lost phone all leave the device unpaired), which is exactly the state
+    that opens the door;
   - CSP `default-src 'self'`, no inline scripts, no framing;
   - the API key is write-only (never rendered back).
 
@@ -377,39 +390,83 @@ the BeagleBone Black's eMMC, which is the same layout written from one device
 to another instead of over the network.
 
 **Install to the internal storage (M11).** `wa-transcriber -flash /dev/mmcblk1`
-(confirmed with `-flash-confirm mmcblk1`) and the System page's "Internal
-storage" card behind the typed device name do the same thing, and they need
-no network: the card *is* the image. The target is found by rule, never by
-guess — the parent disk of `/sys/class/block/*` whose `device/type` is `MMC`,
-whose `removable` is 0, that is not the disk the running root came from
+(confirmed with `-flash-confirm /dev/mmcblk1`, the full device path or its
+bare name — what the refusal prints is exactly what to type) and the System
+page's "Internal storage" card behind the same typed name do the same thing,
+and they need no network: the card *is* the image. The target is found by
+rule, never by guess — the parent disk of `/sys/class/block/*` whose
+`device/type` is `MMC`, that is not the disk the running root came from
 (matched by device number, as `FindSlots` does) and that covers the bytes to
-be written; zero candidates is "no internal storage" (the Pi 2's one line),
-two or more is a refusal that lists what was seen, and a device the owner
-names has to pass the same checks. What is copied is the MBR and the three
-system partitions — p1 boot (MLO/U-Boot, kernel, boot file, `wat.txt`), p2
-root A, p3 root B — each at the offset it already has, because the partition
-table is copied with them; DATA is *not* cloned (it is created on the new disk
-by `S01data` as on a fresh card and filled from the marker), and nothing after
-p3 is written, so a 400 MB card fits a 4 GB eMMC. Every region is hashed while
-it is read and again as it is written, the write is fsynced, and then the
-destination is read back and both sides re-hashed before anything says
-"remove the card and reboot": a read-back that differs is the one check that
-separates "the internal storage holds a copy" from "it will boot", and an
-eMMC that silently wrote different bytes would only be found at the next power
-on otherwise. No success is reported for a partial copy: a cancelled or failed
-clone names the region that was not written, leaves the card untouched (the
-only write to it is the marker, and only after the read-back) and the target
+be written. The type is the primary discriminator; the `removable` flag is
+not, because on the BeagleBone Black both the SD slot and the eMMC report
+`removable=0` (only `device/type` = `MMC` plus "not the running disk" tells
+them apart there), so it is only printed in the refusal line. Zero candidates
+is "no internal storage" (the Pi 2's one line), two or more is a refusal that
+lists what was seen, and a device the owner names has to pass the same checks.
+What is copied is the MBR and the three system partitions — p1 boot
+(MLO/U-Boot, kernel, boot file, `wat.txt`), p2 root A, p3 root B — each at the
+offset it already has, because the partition table is copied with them; DATA
+is *not* cloned (it is created on the new disk by `S01data` as on a fresh card
+and filled from what the install staged), and nothing after p3 is written, so
+a 400 MB card fits a 4 GB eMMC. Every region is hashed while it is read and
+again as it is written, the write is fsynced, and then the destination is read
+back and both sides re-hashed before anything says "remove the card and
+reboot": a read-back that differs is the one check that separates "the
+internal storage holds a copy" from "it will boot", and an eMMC that silently
+wrote different bytes would only be found at the next power on otherwise. No
+success is reported for a partial copy: a cancelled or failed clone names the
+region that was not written, leaves the card untouched and the target
 half-written — not bootable yet — and running it again completes it, since
 every byte is a copy. The card is also the recovery path: the AM335x ROM boots
 from the SD card when one is inserted, so the device keeps working whatever
-state the eMMC is in. Last, `wat-migrate` is written atomically on the copied
-boot partition: one line naming the card's DATA partition (`from
-/dev/mmcblk0p4`) and one `file` line per file that makes the device itself
-(`config.json`, `session.db` with `-wal`/`-shm`, `wifi.json`). On the first
-start from the eMMC, after `S01data` has created and mounted the new DATA, the
-script mounts that partition read-only, copies each listed file to a temp name
-in `/data`, fsyncs and renames it, and deletes the marker only when all of them
-are in — so a power cut at any point leaves the marker in place and the next
-boot copies everything again onto identical files, and the source is never
-written. Without the marker the device boots unpaired, which is the only cost
-of an interrupted migration and not of an interrupted clone.
+state the eMMC is in.
+
+Last, the session is *staged on the target's* boot partition (p1, just
+cloned), not named by device: the install mounts `<target>p1` read-write,
+copies the files that make the
+device itself — `config.json`, `session.db` with `-wal`/`-shm`, `wifi.json` —
+into `<boot>/wat-migrate.d/`, each through a temp name, fsync and rename, and
+only then writes `wat-migrate` atomically beside them: one `file` line per
+staged file. This is the fix for the one thing the first design got wrong: the
+first boot from the eMMC is the one *after* the owner removed the card, and
+then the card's DATA partition the old marker named (`from /dev/mmcblk0p4`)
+does not exist, so the marker sat there forever and the device booted
+unpaired.
+
+Three things this had to learn on the board, each now pinned by a test:
+
+- the kernel still holds the target's **old** partition table after the clone,
+  so `<target>p1` is unmountable (`EINVAL`) until `partx -u <disk>` makes the
+  kernel re-read it — hence the re-read seam, best effort, before the mount;
+- the temp name of a staged file must be legal on **VFAT**:
+  `.staging:config.json` failed with EINVAL and staged nothing, so the prefix
+  is `wat-staging-`;
+- the staging mount is remounted read-only and then **detached** with
+  `unmount(2)`; a remount alone left `<target>p1` mounted, the next install
+  then refused (it must not write under a live mount), and the FAT stayed
+  writable for no reason. The remount call also passes its arguments in the
+  documented `(dir, "", "remount,ro")` form, which the default implementation
+  used to turn into `mount -o remount,ro <dir> ""`.
+
+Every step — clone per region, read-back, table re-read, mount, each file with
+its size and duration, marker, unmount — goes through `Request.Logf`, which is
+how a serial console shows where an install is; the `-flash` mode wires it to
+the console logger at INFO.
+
+The free space on the FAT is checked with statfs before the first
+byte, with the cluster rounding; if the files do not fit, the clone is still
+finished and reported as written and verified, and the message says the
+session could not be staged (needs N, M free) and that the device will boot
+unpaired with its pairing left on the card. The `from <device>` line is still
+written and still read, for a board whose first boot happens with the card
+inserted, but nothing depends on it. On the first start from the eMMC, after
+`S01data` has created and mounted the new DATA, the script copies each listed
+file from `/boot/wat-migrate.d/` (falling back to the `from` device for a file
+that is not staged) to a temp name in `/data`, fsyncs and renames it, and
+deletes the marker only when all of them are in; then it deletes
+`wat-migrate.d` with `/boot` writable for a moment (if that remount fails the
+copy already stands and the leftovers are a few kB). A power cut at any point
+leaves the marker in place and the next boot copies everything again onto
+identical files, and no source is ever written. Without the marker the device
+boots unpaired, which is the only cost of an interrupted migration and not of
+an interrupted clone.

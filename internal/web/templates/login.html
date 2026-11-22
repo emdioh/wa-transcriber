@@ -1,10 +1,21 @@
 {{define "content"}}
 <section class="card narrow">
   <form method="post" action="/login" class="stack">
-    <input type="hidden" name="next" value="{{.}}">
+    <input type="hidden" name="next" value="{{.Next}}">
     <label>Password <input type="password" name="password" required autocomplete="current-password" autofocus></label>
     <button>Log in</button>
   </form>
   <p class="hint">Forgot it? Send <code>!password</code> in your own WhatsApp chat to get a new one.</p>
 </section>
+{{if .CanReset}}
+<section class="card narrow">
+  <h2>Lost the password <em>and</em> the phone?</h2>
+  <p>This device is not linked to WhatsApp, so there is no chat to send <code>!password</code> from. Erasing everything here is the way back in: it unlinks nothing (there is nothing to unlink), deletes the settings, the password and the saved WiFi networks, and restarts into setup mode.</p>
+  <p>It is only offered while the device is not linked, so a working device on your network cannot be erased through this page.</p>
+  <form method="post" action="/reset" class="stack">
+    <label>Type RESET to confirm <input name="confirm" required pattern="RESET" autocomplete="off"></label>
+    <button class="danger">Erase everything and restart</button>
+  </form>
+</section>
+{{end}}
 {{end}}
