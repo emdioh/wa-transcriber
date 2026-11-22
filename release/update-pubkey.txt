@@ -1,0 +1,31 @@
+# wa-transcriber self-update public key (ed25519, base64)
+#
+# This file is compiled into the binary with
+#   -X main.updatePubKey=$(UPDATE_PUBKEY)          (see Makefile LDFLAGS)
+# and internal/update uses it to verify manifest.json.ed25519 from a GitHub
+# release (docs/ARCHITECTURE.md section 11, decision D17).
+#
+# How to fill it in, once, on the machine that keeps the private key out of
+# the repository:
+#
+#   1. Generate the keypair (refuses to overwrite, writes the private key
+#      mode 0600). Keep it offline, e.g. $HOME/wat-update.key, never in git:
+#
+#        go run ./tools/wat-keygen -out "$HOME/wat-update.key"
+#
+#      The command prints the base64 public key on stdout and a reminder on
+#      stderr.
+#
+#   2. Paste the base64 public key on its own line below, replacing the empty
+#      placeholder. One line, no spaces, no quotes.
+#
+#   3. Commit this file. Every release from then on ships manifest.json and
+#      the owner uploads the signature with `make sign-manifest` (see the
+#      Makefile); CI publishes only the unsigned manifest.json.
+#
+# An empty value (this placeholder) simply compiles the self-update out: the
+# Docker image and dev builds never verify, and no manifest is trusted. A lost
+# private key cannot be recovered — devices must then be reflashed with a
+# binary that embeds the new public key.
+#
+# Public key goes on the next line, nothing else:

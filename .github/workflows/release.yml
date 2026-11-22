@@ -28,12 +28,19 @@ jobs:
       - name: Checksums
         run: cd dist && sha256sum wa-transcriber-linux-* > SHA256SUMS
 
+      # The manifest the device checks for updates (D17). It is published
+      # unsigned here; the owner uploads manifest.json.ed25519 with
+      # `make sign-manifest` because CI never has the private key.
+      - name: Manifest
+        run: go run ./tools/wat-manifest -dist dist -version "$GITHUB_REF_NAME" -out dist/manifest.json
+
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/wa-transcriber-linux-*
             dist/SHA256SUMS
+            dist/manifest.json
           generate_release_notes: true
 
   image:
