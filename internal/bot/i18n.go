@@ -56,16 +56,6 @@ const (
 	msgStatusNoAddress
 	msgNever
 	msgAgo
-	msgUpdateHeader
-	msgUpdateLine
-	msgUpdateCheck
-	msgUpdateAuto
-	msgUpdateFound
-	msgUpdateNone
-	msgUpdateFailed
-	msgUpdateRollback
-	msgUpdateUnavailable
-	msgUpdateDisabled
 	msgKeyCount
 )
 
@@ -127,16 +117,6 @@ var messages = map[string]map[msgKey]string{
 		msgStatusNoAddress:            "no network address",
 		msgNever:                      "never",
 		msgAgo:                        "%s (%s ago)",
-		msgUpdateHeader:               "⬆️ Software updates\n",
-		msgUpdateLine:                 "• Version: %s\n",
-		msgUpdateCheck:                "• Automatic check: %s\n",
-		msgUpdateAuto:                 "• Install without asking: %s\n",
-		msgUpdateFound:                "• Available: %s (%s)\n",
-		msgUpdateNone:                 "• Available: no new version\n",
-		msgUpdateFailed:               "• Last attempt: ⚠ %s\n",
-		msgUpdateRollback:             "• Previous version: %s\n",
-		msgUpdateUnavailable:          "⚠️ Updates are not available on this device (open the web UI).",
-		msgUpdateDisabled:             "ℹ️ Updates are off on this device.",
 	},
 	"it": {
 		msgReplyToVoice: "ℹ️ Rispondi a un vocale con !t per trascriverlo.",
@@ -193,16 +173,6 @@ var messages = map[string]map[msgKey]string{
 		msgStatusNoAddress:            "nessun indirizzo di rete",
 		msgNever:                      "mai",
 		msgAgo:                        "%s (%s fa)",
-		msgUpdateHeader:               "⬆️ Aggiornamenti del software\n",
-		msgUpdateLine:                 "• Versione: %s\n",
-		msgUpdateCheck:                "• Controllo automatico: %s\n",
-		msgUpdateAuto:                 "• Installa senza chiedere: %s\n",
-		msgUpdateFound:                "• Disponibile: %s (%s)\n",
-		msgUpdateNone:                 "• Disponibile: nessuna nuova versione\n",
-		msgUpdateFailed:               "• Ultimo tentativo: ⚠ %s\n",
-		msgUpdateRollback:             "• Versione precedente: %s\n",
-		msgUpdateUnavailable:          "⚠️ Gli aggiornamenti non sono disponibili su questo dispositivo (apri la web UI).",
-		msgUpdateDisabled:             "ℹ️ Gli aggiornamenti sono disattivati su questo dispositivo.",
 	},
 }
 

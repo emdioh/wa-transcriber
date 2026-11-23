@@ -48,8 +48,8 @@ Board state to know about:
 3. M10: a release carrying an `images` block, then the real install-from-the-
    network test, power cuts, and the U-Boot bootcounter for a kernel that never
    boots (`wat-kfd.2`, `.5`, `.6`);
-4. M9 leftovers: the field test on the Pi 2 (`wat-t3l.6`) and `!update`
-   (`wat-t3l.7`);
+4. M9 leftovers: the field test on the Pi 2 (`wat-t3l.6`). `!update` in the
+   chat was dropped by the owner (`wat-t3l.7`): the web UI is the way;
 5. the login-page reset (commit `438737c`) reaches the device only with the
    next image.
 
@@ -86,7 +86,7 @@ Remaining work (details and exit criteria in [docs/PLAN.md](docs/PLAN.md)):
 6. Nice-to-have: read the Italian replies in a real chat.
 7. **M9** binary updates from GitHub releases (D17): the code is in; what is
    left is the signing keypair (wat-t3l.5), the field test on both boards
-   (wat-t3l.6) and the `!update` command (wat-t3l.7).
+   (wat-t3l.6). `!update` in the chat was dropped on purpose (wat-t3l.7).
 8. **M10** image updates with two root slots (D18): code and images done;
    needs the owner's reflash, the field test, and the U-Boot bootcounter for a
    kernel that never boots (wat-kfd.6).
