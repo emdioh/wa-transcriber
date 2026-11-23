@@ -28,6 +28,19 @@ phone connect. Fail → use an RT5370 or MT7612U dongle and repeat.
 | Raspberry Pi 2 | | | | | |
 | Cubieboard | | | | | |
 
+### 1.1 Dongles seen so far
+
+| Date | Dongle (USB id, chipset) | Board | Verdict |
+|---|---|---|---|
+| 2026-11-23 | TP-Link TL-WN823N v2/v3, `2357:0109`, RTL8192EU rev B | BBB (host port) | **Not supported**: `rtl8xxxu` is in the kernel (`omap2plus_defconfig`) and binds, then fails — `Direct firmware load for rtlwifi/rtl8192eu_nic.bin failed with error -2`, `Fatal - failed to load firmware`, probe `-11`, no `wlan0`. The image ships only `wireless-regdb`, no `linux-firmware`. Even with the blob, `rtl8xxxu` AP mode is not reliable enough for the setup AP. |
+
+Firmware is the catch, not only the chipset: `mt76x2u` needs `mt7662.bin`
+and `mt7662_rom_patch.bin`, which the images do not ship either (wat-est),
+so an MT7612U fails the same way. Only the RT5370 family
+(`rt2800usb`, no firmware file) works with the current images; anything
+else needs `linux-firmware` added (and its driver enabled in
+`../os/board/common/linux.fragment`).
+
 ## 2. Run in managed mode
 
 ```sh
