@@ -122,19 +122,27 @@ if [ "$label" != "DATA" ]; then
 fi
 
 mkdir -p /data
-# Mount the device, not LABEL=DATA: the tag lookup goes through blkid and
-# failed even when the label was on the partition.
-if mount -t ext4 -o noatime,nodev,nosuid "$datadev" /data; then
-	log "DATA mounted from $datadev"
+# Already mounted (the script run from a shell to finish a migration, or a
+# second run in the same boot): mount(8) answers EBUSY, and the repair path
+# below would then run e2fsck on a *live* filesystem, which refuses and leaves
+# /data unmounted. Check the mount table first.
+if mountpoint -q /data; then
+	log "/data is already mounted, leaving it alone"
 else
-	# A filesystem interrupted by a power cut is repaired once, then
-	# mounted again; a healthy one is never touched (e2fsck -p exits 0).
-	log "mounting $datadev failed, checking the filesystem once"
-	if e2fsck -p "$datadev" && mount -t ext4 -o noatime,nodev,nosuid "$datadev" /data; then
-		log "DATA mounted from $datadev after e2fsck"
+	# Mount the device, not LABEL=DATA: the tag lookup goes through blkid and
+	# failed even when the label was on the partition.
+	if mount -t ext4 -o noatime,nodev,nosuid "$datadev" /data; then
+		log "DATA mounted from $datadev"
 	else
-		log "mounting $datadev at /data failed, /data stays unmounted"
-		exit 0
+		# A filesystem interrupted by a power cut is repaired once, then
+		# mounted again; a healthy one is never touched (e2fsck -p exits 0).
+		log "mounting $datadev failed, checking the filesystem once"
+		if e2fsck -p "$datadev" && mount -t ext4 -o noatime,nodev,nosuid "$datadev" /data; then
+			log "DATA mounted from $datadev after e2fsck"
+		else
+			log "mounting $datadev at /data failed, /data stays unmounted"
+			exit 0
+		fi
 	fi
 fi
 
@@ -257,23 +265,31 @@ migrate_from_marker() {
 		fi
 		rmdir "$mnt" 2>/dev/null || true
 	fi
-	rm -f "$marker"
-	sync
-	log "copied $copied file(s) into /data, removed the migration marker"
-	# The staged files are dead weight now: a later boot must not copy them
-	# over the files the device has been writing since. It needs /boot
-	# writable for a moment; if that fails the marker is gone anyway, so the
-	# copy has already succeeded and the leftovers are only a few kB.
-	if [ -n "$stageddir" ]; then
-		if mount -o remount,rw /boot; then
-			rm -rf "$stageddir"
-			sync
-			if ! mount -o remount,ro /boot; then
-				log "/boot is still writable, remounting it read-only failed"
-			fi
-		else
-			log "cannot remount /boot writable, leaving the staged files in $stageddir"
+	# The marker and the staged files are dead weight now: a later boot must
+	# not copy them over the files the device has been writing since. Both
+	# live on /boot, which is mounted read-only, so it has to be made
+	# writable *first* - removing the marker before that failed with
+	# "Read-only file system" and the log claimed it had been removed, which
+	# is how a marker survives on a device that migrated successfully.
+	if mount -o remount,rw /boot; then
+		ok=1
+		rm -f "$marker" || ok=
+		[ -z "$stageddir" ] || rm -rf "$stageddir" || ok=
+		sync
+		if ! mount -o remount,ro /boot; then
+			log "/boot is still writable, remounting it read-only failed"
 		fi
+		if [ -n "$ok" ]; then
+			log "copied $copied file(s) into /data, removed the migration marker"
+		else
+			log "copied $copied file(s) into /data, but the marker or the staged files could not be removed from /boot"
+		fi
+	else
+		# Nothing is lost: the files are in /data, and the marker left in
+		# place only means the next boot copies the same files onto the
+		# device again (each one through a temp name), which costs a reboot
+		# and nothing else. Say so instead of claiming success.
+		log "copied $copied file(s) into /data, but /boot could not be made writable: the marker stays, the next boot copies again"
 	fi
 }
 
