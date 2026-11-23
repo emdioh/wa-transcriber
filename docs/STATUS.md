@@ -75,6 +75,12 @@ install, and the owner's real signing key.
 - Pairing by phone number (code) from the web UI.
 - `!password` deleting the command message for everyone.
 - Self-chat detection for single-member groups.
+- **Backup and restore** (`internal/backup`, `GET /system/backup`,
+  `POST /system/restore`, and `POST /restore` on the setup page while no
+  password is set): round-trip, tampered file, missing or unknown manifest,
+  unsafe names, size caps, and "a failed restore leaves the data directory
+  untouched" are unit-tested; on a device it has not been tried yet
+  (`wat-hpg`).
 - The Docker image: CI built and pushed it for amd64, arm64 and armv7
   (`ghcr.io/emdioh/wa-transcriber`, tags `v0.1.1`, `0.1.1`, `latest`).
   Compressed layer sizes from the release log: 9.1 MB amd64, 8.4 MB arm64,
