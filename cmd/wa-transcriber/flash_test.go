@@ -68,8 +68,7 @@ func newFlashBoard(t *testing.T) *flashBoard {
 	if !ok {
 		t.Fatal("no device numbers on this platform")
 	}
-	major := devNum >> 8 & 0xfff
-	minor := (devNum>>12)<<8 | devNum&0xff
+	major, minor := splitDev(devNum)
 	b.partDev("mmcblk0p2", strconv.FormatUint(major, 10)+":"+strconv.FormatUint(minor, 10))
 
 	// The target's boot partition carries the boot file the clone copied,
@@ -358,4 +357,35 @@ func readFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// splitDev splits a device number the way the kernel packs it into major and
+// minor (glibc's makedev in reverse). The hand-rolled version this replaces
+// got minors of 256 and more wrong, which made the fixtures agree with
+// internal/imageupdate only on machines whose root filesystem happened to
+// have a small minor - green locally, red on a CI runner.
+func splitDev(dev uint64) (major, minor uint64) {
+	major = dev >> 8 & 0xfff
+	minor = dev&0xff | (dev>>12)&0xfff00
+	return major, minor
+}
+
+// The fixtures have to encode device numbers exactly as the kernel does, or
+// they agree with internal/imageupdate only on machines whose root filesystem
+// has a small minor - which is how a green local run went red on a CI runner.
+func TestSplitDevMatchesTheKernelEncoding(t *testing.T) {
+	for _, c := range []struct{ dev, major, minor uint64 }{
+		{0x801, 8, 1},       // sdX1
+		{0xB303, 179, 3},    // mmcblk0p3
+		{0x30005D, 0, 861},  // tmpfs/overlay with a minor over 255
+		{0x10004, 0x100, 4}, // a major over 255
+	} {
+		major, minor := splitDev(c.dev)
+		if major != c.major || minor != c.minor {
+			t.Fatalf("splitDev(%#x) = %d:%d, want %d:%d", c.dev, major, minor, c.major, c.minor)
+		}
+		if back := minor&0xff | major<<8 | (minor&^0xff)<<12; back != c.dev {
+			t.Fatalf("repacking %d:%d = %#x, want %#x", major, minor, back, c.dev)
+		}
+	}
 }

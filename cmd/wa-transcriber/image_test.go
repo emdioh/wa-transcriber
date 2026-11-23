@@ -84,8 +84,7 @@ func (b *fakeBoard) writeSys() {
 	if !ok {
 		b.t.Fatal("the running partition has no device number")
 	}
-	major := dev >> 8 & 0xfff
-	minor := (dev>>12)<<8 | dev&0xff
+	major, minor := splitDev(dev)
 	p := filepath.Join(b.req.SysBlock, b.root)
 	if err := os.MkdirAll(p, 0o755); err != nil {
 		b.t.Fatal(err)
