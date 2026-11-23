@@ -462,6 +462,19 @@ its size and duration, marker, unmount — goes through `Request.Logf`, which is
 how a serial console shows where an install is; the `-flash` mode wires it to
 the console logger at INFO.
 
+Two more from the first real migration, both in `S01data`:
+
+- **`/data` may already be mounted** when the script runs (finishing a
+  migration from a shell, or a second run in one boot). It now asks
+  `mountpoint` first; before, mount answered `EBUSY` and the repair path ran
+  `e2fsck` on a live filesystem, which refuses, so the migration silently did
+  not happen;
+- the **marker is removed after `/boot` is made writable**, not before: `rm`
+  on the read-only boot partition failed while the log said the marker was
+  gone, so a migrated device kept re-copying on every boot. The cleanup
+  remounts `/boot` rw, removes the marker and the staged files, checks each
+  removal, remounts ro, and logs exactly which of those happened.
+
 The free space on the FAT is checked with statfs before the first
 byte, with the cluster rounding; if the files do not fit, the clone is still
 finished and reported as written and verified, and the message says the
