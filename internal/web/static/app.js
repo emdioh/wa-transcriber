@@ -95,7 +95,18 @@
     }, 3000);
   };
 
+  // System page: while an install to the internal storage runs, reload the
+  // page so the progress and the final result show up without a click. The
+  // install itself is not tied to this page (the server detaches it from the
+  // request), so a reload here only refreshes what is displayed.
+  var initFlash = function () {
+    var card = document.querySelector('[data-flash="busy"]');
+    if (!card) return;
+    setTimeout(function () { location.reload(); }, 5000);
+  };
+
   initPairing();
   initLogs();
   initRestart();
+  initFlash();
 })();

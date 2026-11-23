@@ -98,8 +98,7 @@
 </section>
 {{end}}
 {{with .Flash}}
-<section class="card">
-  <h2>Internal storage</h2>
+<section class="card" data-flash="{{if .Refreshing}}busy{{end}}">  <h2>Internal storage</h2>
   {{if .Status.Error}}
   <p class="flash err" role="status">⚠ {{.Status.Error}}</p>
   <p class="muted">The SD card is the only flash this board has, so there is nothing to install onto: keep a spare card and reflash it as usual when this one wears out.</p>
@@ -108,16 +107,20 @@
     <dt>Destination</dt><dd><code>{{.Status.Target}}</code>{{with .Size}} · {{.}}{{end}}</dd>
     <dt>Copied there</dt><dd>{{with .Needs}}{{.}} — the boot partition and both system partitions{{end}}</dd>
     <dt>Running from</dt><dd><code>{{.Status.Source}}</code></dd>
-    {{if .Status.Busy}}<dt>In progress</dt><dd>the log below shows the copy; do not power the device off</dd>{{end}}
+    {{if .Status.Busy}}<dt>In progress</dt><dd>{{.Phase}}{{with .Written}} · {{.}}{{end}} · {{.Percent}} % — do not power the device off</dd>{{end}}
+    {{if .Status.Done}}<dt>Written</dt><dd>{{datetime .Status.DoneAt}} — the internal storage reads back identical</dd>{{end}}
   </dl>
   {{if .Status.Busy}}
-  <p class="muted">An install is running. Watch the <a href="/logs">log</a>: it reports every 16 MB. The card stays untouched and still boots the device, so a power cut now only means running this again.</p>
+  <p class="flash ok" role="status">⏳ An install is running ({{.Percent}} %). This page refreshes itself, and the <a href="/logs">log</a> reports every 16 MB. Closing the browser, locking the phone or reloading does <strong>not</strong> stop it: the copy runs on the device, not in the page. The card stays untouched and still boots the device, so a power cut now only means running this again.</p>
   {{else}}
+  {{if .Status.Done}}
+  <p class="flash ok" role="status">✓ {{datetime .Status.DoneAt}}: the internal storage is written and reads back identical. Power the device off, remove the SD card and power it on again — it boots from the internal storage.</p>
+  {{end}}
   <form method="post" action="/system/flash/install" class="stack">
     <label>Type <code>{{.Status.Install}}</code> <input name="confirm" required autocomplete="off"></label>
     <button class="danger">Install this card to the internal storage</button>
   </form>
-  <p class="muted">Copies this card's boot partition and both system partitions onto {{.Status.Target}} and reads every byte back before saying so. The card is not changed apart from a small marker file (<code>{{.Status.Marker}}</code>) that makes the first start from the internal storage copy the settings, the WhatsApp session and the WiFi networks over, so the phone stays paired. Nothing is downloaded: it works without a network. The progress is in the <a href="/logs">log</a>, not on this page. If it fails, the card still boots the device and the internal storage is simply not bootable yet: run it again. When it is done, power the device off, remove the SD card and power it on again — the board boots from the card when one is inserted.</p>
+  <p class="muted">Copies this card's boot partition and both system partitions onto {{.Status.Target}} and reads every byte back before saying so. The card is not changed apart from a small marker file (<code>{{.Status.Marker}}</code>) that makes the first start from the internal storage copy the settings, the WhatsApp session and the WiFi networks over, so the phone stays paired. Nothing is downloaded: it works without a network. The install is not tied to this page: once started it runs to the end even if the phone locks or the browser closes, and reloading this page shows how far it got. If it fails, the card still boots the device and the internal storage is simply not bootable yet: run it again. When it is done, power the device off, remove the SD card and power it on again — the board boots from the card when one is inserted.</p>
   {{end}}
   {{end}}
 </section>

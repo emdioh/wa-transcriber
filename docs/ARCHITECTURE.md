@@ -479,6 +479,23 @@ its size and duration, marker, unmount — goes through `Request.Logf`, which is
 how a serial console shows where an install is; the `-flash` mode wires it to
 the console logger at INFO.
 
+**The install is not tied to the page that starts it.** The System page's
+button is an ordinary POST, and the first version ran the clone inside that
+request: on a phone, the screen turning off (or any reload) cancelled the
+request context and the copy stopped halfway, with the page gone and nothing
+on screen to say so. The handler now runs the install on
+`context.WithoutCancel(r.Context())` with the 30-minute bound, so losing the
+browser cannot leave a half-written internal storage; the service keeps the
+last progress (`ProgressDone`/`ProgressTotal`, updated per chunk, the copy
+being the first half of the total and the read-back the second) and the
+outcome (`Done`/`DoneAt`), and `Status` reports them, so a page loaded in the
+middle of an install shows "copying · 192 MB of 412 MB · 47 %" or "checking
+the copy", and one loaded afterwards shows the timestamp and what to do next.
+While an install runs the card marks itself `data-flash="busy"` and `app.js`
+reloads the page every 5 s, which is the whole polling mechanism — no new
+endpoint, and the log still has every 16 MB line. Same reasoning as the
+`!reset` re-exec: a long operation belongs to the device, not to a connection.
+
 Two more from the first real migration, both in `S01data`:
 
 - **`/data` may already be mounted** when the script runs (finishing a

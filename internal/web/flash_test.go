@@ -23,6 +23,16 @@ type fakeFlashInstaller struct {
 	instErr error
 	got     []string
 	calls   int
+
+	// For the "the page went away" test: Install announces itself on
+	// started, waits for release, and records what its context looked like
+	// when it was finally done.
+	started   chan struct{}
+	release   chan struct{}
+	finished  chan struct{}
+	cancelled chan struct{}
+	ctx       context.Context
+	ctxErr    error
 }
 
 // web_Flasher is what Status returns; a named alias keeps the struct field
@@ -35,12 +45,34 @@ func (f *fakeFlashInstaller) Status(context.Context) FlashStatus {
 	return f.st
 }
 
-func (f *fakeFlashInstaller) Install(_ context.Context, confirm string) (FlashStatus, error) {
+func (f *fakeFlashInstaller) Install(ctx context.Context, confirm string) (FlashStatus, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.calls++
 	f.got = append(f.got, confirm)
-	return f.st, f.instErr
+	st, err := f.st, f.instErr
+	started, release, finished := f.started, f.release, f.finished
+	f.mu.Unlock()
+	if started != nil {
+		f.mu.Lock()
+		f.ctx, f.cancelled = ctx, make(chan struct{}, 1)
+		cancelled := f.cancelled
+		f.mu.Unlock()
+		// Report a cancelled context the moment it happens, so the test can
+		// tell "still running after the page left" from "killed with it".
+		go func() {
+			<-ctx.Done()
+			cancelled <- struct{}{}
+		}()
+		started <- struct{}{}
+		<-release
+		f.mu.Lock()
+		f.ctxErr = ctx.Err()
+		f.mu.Unlock()
+		if finished != nil {
+			close(finished)
+		}
+	}
+	return st, err
 }
 
 func (f *fakeFlashInstaller) confirmed() []string {
@@ -206,3 +238,118 @@ func TestFlashCardBusyHidesTheButton(t *testing.T) {
 type errTest string
 
 func (e errTest) Error() string { return string(e) }
+
+// The install is a disk write that takes minutes: the phone's screen going off
+// or a reload cancels the HTTP request, and that must not cancel the copy. The
+// handler detaches the context from the request, so the installer's context is
+// still alive after the client is gone.
+func TestFlashInstallKeepsRunningWhenThePageGoesAway(t *testing.T) {
+	h, f := newFlashHarness(t, FlashStatus{
+		Enabled: true, Target: "/dev/mmcblk1", Size: 4 << 30, Need: 412 << 20,
+		Install: "mmcblk1", Source: "/dev/mmcblk0",
+	})
+	f.mu.Lock()
+	f.started = make(chan struct{}, 1)
+	f.release = make(chan struct{})
+	f.finished = make(chan struct{})
+	f.mu.Unlock()
+
+	form := url.Values{"confirm": {"mmcblk1"}}.Encode()
+	reqCtx, cancelReq := context.WithCancel(t.Context())
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost,
+		h.srv.URL+"/system/flash/install", strings.NewReader(form))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", h.srv.URL)
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		resp, err := h.c.Do(req)
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+
+	<-f.started // the install has begun
+	cancelReq() // the screen went off / the tab reloaded
+	// A failing assertion must still let the handler finish: the test server's
+	// Close waits for it, so release exactly once and wait for the installer.
+	var once sync.Once
+	release := func() { once.Do(func() { close(f.release) }) }
+	defer func() {
+		release()
+		<-f.finished
+	}()
+	// Give the server a moment to notice the client is gone. With the request
+	// context wired straight in, the installer's context dies right here;
+	// with the context detached it never does.
+	select {
+	case <-f.cancelled:
+		release()
+		<-f.finished
+		t.Fatal("the install's context was cancelled with the page")
+	case <-time.After(500 * time.Millisecond):
+	}
+	release()
+	<-f.finished
+	<-served
+
+	if got := f.confirmed(); len(got) != 1 {
+		t.Fatalf("installer calls = %d, want 1", len(got))
+	}
+	if f.ctxErr != nil {
+		t.Fatalf("the install was cancelled with the page: %v", f.ctxErr)
+	}
+}
+
+// A page loaded while an install runs must show that it runs and how far it
+// got, not the form again.
+func TestFlashCardShowsProgress(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		done, total int64
+		want        []string
+	}{
+		{"copying", 96 << 20, 204 << 20, []string{"In progress", "copying", "47 %", "96 MB of 102 MB"}},
+		{"checking", 150 << 20, 204 << 20, []string{"In progress", "checking the copy", "73 %", "102 MB of 102 MB"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, _ := newFlashHarness(t, FlashStatus{
+				Enabled: true, Target: "/dev/mmcblk1", Size: 4 << 30, Need: 102 << 20,
+				Install: "mmcblk1", Source: "/dev/mmcblk0", Busy: true,
+				ProgressDone: c.done, ProgressTotal: c.total,
+			})
+			_, _, body := h.get(h.c, "/system")
+			for _, want := range c.want {
+				if !strings.Contains(body, want) {
+					t.Errorf("page missing %q:\n%s", want, body)
+				}
+			}
+			// The page refreshes itself only while an install runs.
+			if !strings.Contains(body, `data-flash="busy"`) {
+				t.Error("the card does not ask the page to follow the install")
+			}
+		})
+	}
+}
+
+// After the install the page has to say so, because the page that started it
+// may be long gone.
+func TestFlashCardShowsTheOutcome(t *testing.T) {
+	done := time.Date(2026, 11, 23, 14, 5, 0, 0, time.UTC)
+	h, _ := newFlashHarness(t, FlashStatus{
+		Enabled: true, Target: "/dev/mmcblk1", Size: 4 << 30, Need: 412 << 20,
+		Install: "mmcblk1", Source: "/dev/mmcblk0", Done: true, DoneAt: done,
+	})
+	_, _, body := h.get(h.c, "/system")
+	for _, want := range []string{"✓", "written and reads back identical", "remove the SD card"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `data-flash="busy"`) {
+		t.Error("a finished install still asks the page to refresh")
+	}
+}

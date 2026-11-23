@@ -283,6 +283,14 @@ type flashService struct {
 
 	mu  sync.Mutex
 	run bool // an install is running
+	// The card on /system shows these: how far the running install got, and
+	// the outcome of the last one. Both live only in this process, which is
+	// the lifetime that matters - the page that starts an install is not the
+	// page that sees it end, and after a reboot the answer is on the boot
+	// partition, not here.
+	done   int64
+	total  int64
+	doneAt time.Time
 }
 
 // newFlashService builds the card's service. Nil (no card at all) when the
@@ -316,16 +324,21 @@ func (s *flashService) Status(ctx context.Context) web.FlashStatus {
 	}
 	s.mu.Lock()
 	running := s.run
+	done, total, doneAt := s.done, s.total, s.doneAt
 	s.mu.Unlock()
 	st := web.FlashStatus{
-		Enabled: true,
-		Target:  t.Device,
-		Size:    t.Size,
-		Need:    need,
-		Source:  req.Source,
-		Marker:  flashMarkerName,
-		Install: t.Name,
-		Busy:    running,
+		Enabled:       true,
+		Target:        t.Device,
+		Size:          t.Size,
+		Need:          need,
+		Source:        req.Source,
+		Marker:        flashMarkerName,
+		Install:       t.Name,
+		Busy:          running,
+		ProgressDone:  done,
+		ProgressTotal: total,
+		Done:          !doneAt.IsZero(),
+		DoneAt:        doneAt,
 	}
 	return st
 }
@@ -349,15 +362,23 @@ func (s *flashService) Install(ctx context.Context, confirm string) (web.FlashSt
 		return s.Status(ctx), errors.New("an install is already running")
 	}
 	s.run = true
+	s.done, s.total = 0, 0
+	s.doneAt = time.Time{}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
 		s.run = false
+		s.done, s.total = 0, 0
 		s.mu.Unlock()
 	}()
 
 	var last int64 = -flashProgressEvery
 	progress := func(done, total int64) {
+		// The numbers the page reads are updated on every chunk; the log line
+		// stays at one every 16 MB so the ring buffer is not flooded.
+		s.mu.Lock()
+		s.done, s.total = done, total
+		s.mu.Unlock()
 		if done-last < flashProgressEvery && done < total {
 			return
 		}
@@ -377,6 +398,9 @@ func (s *flashService) Install(ctx context.Context, confirm string) (web.FlashSt
 	if rep.Unpaired {
 		s.log.Warn("flash: the device will boot unpaired", "why", rep.UnpairedWhy)
 	}
+	s.mu.Lock()
+	s.doneAt = time.Now()
+	s.mu.Unlock()
 	return s.Status(ctx), nil
 }
 

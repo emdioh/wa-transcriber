@@ -36,6 +36,19 @@ type FlashStatus struct {
 	Marker string
 	// Busy is set while an install runs: the log shows the progress.
 	Busy bool
+	// ProgressDone and ProgressTotal are the bytes written so far and the
+	// total work of this install: the copy is the first half, the read-back
+	// the second, so 50 % means "written, now checking". Zero total when
+	// nothing is running.
+	ProgressDone  int64
+	ProgressTotal int64
+	// Done and DoneAt are the outcome of the last install in this process:
+	// the internal storage is written and reads back identical. They exist
+	// because the page that started the install is not the page that sees it
+	// end - a phone locks its screen, a tab reloads, the WLAN drops - and the
+	// owner has to be able to come back and read the result.
+	Done   bool
+	DoneAt time.Time
 }
 
 // FlashInstaller is what the card needs: the detected target, and the install
@@ -56,6 +69,13 @@ type flashView struct {
 	Status FlashStatus
 	Size   string // the target's capacity, "4 GB"
 	Needs  string // what is copied onto it, "412 MB"
+	// While an install runs: what it is doing and how far it got, so a page
+	// loaded in the middle of one shows the state instead of the form.
+	Phase   string // "copying", "checking the copy"
+	Percent int
+	Written string // "192 of 412 MB"
+	// Refreshing tells the page to poll itself while the install runs.
+	Refreshing bool
 }
 
 // flashPageView returns the card, or false when there is no installer.
@@ -67,7 +87,25 @@ func (s *Server) flashPageView(ctx context.Context) (*flashView, bool) {
 	if !st.Enabled {
 		return nil, false
 	}
-	return &flashView{Status: st, Size: diskText(st.Size), Needs: sizeText(st.Need)}, true
+	v := &flashView{Status: st, Size: diskText(st.Size), Needs: sizeText(st.Need)}
+	if st.Busy && st.ProgressTotal > 0 {
+		done := st.ProgressDone
+		if done > st.ProgressTotal {
+			done = st.ProgressTotal
+		}
+		v.Percent = int(done * 100 / st.ProgressTotal)
+		v.Phase = "copying"
+		written := done
+		if done > st.Need {
+			// Past the write: the clone is reading both sides back, which is
+			// the half that says the eMMC really holds the bytes.
+			v.Phase = "checking the copy"
+			written = st.Need
+		}
+		v.Written = sizeText(written) + " of " + sizeText(st.Need)
+	}
+	v.Refreshing = st.Busy
+	return v, true
 }
 
 // diskText is a disk capacity, rounded the way a vendor prints it: a 3.9 GB
@@ -97,7 +135,14 @@ func (s *Server) flashInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	confirm := r.PostFormValue("confirm")
-	ctx, cancel := context.WithTimeout(r.Context(), flashInstallTimeout)
+	// The install must not die with the page. A phone that turns its screen
+	// off, a reload or a dropped WLAN cancels the HTTP request, and this is a
+	// disk write that takes minutes: detach the context from the request
+	// (values are kept) and keep only the timeout, so losing the browser can
+	// never leave a half-written internal storage behind. The card on /system
+	// reports the outcome for whoever comes back, and the log has it either
+	// way.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), flashInstallTimeout)
 	defer cancel()
 	if _, err := s.opts.FlashInstaller.Install(ctx, confirm); err != nil {
 		// This is the one failure the owner has to be told about in words:

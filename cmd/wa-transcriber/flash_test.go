@@ -305,6 +305,29 @@ func TestFlashServiceStatusAndRefusals(t *testing.T) {
 	}
 }
 
+// The page that started the install is usually gone before it ends (a phone
+// locks its screen, a tab reloads), so the outcome has to be readable
+// afterwards: a reload asks Status, not the response of a POST that is no
+// longer connected.
+func TestFlashServiceRemembersTheOutcome(t *testing.T) {
+	b := newFlashBoard(t)
+	mustWrite(t, filepath.Join(b.img.Dir, "config.json"), []byte(`{}`))
+	svc := newFlashService(b.img, b.paths, nil)
+	if st := svc.Status(context.Background()); st.Done || st.Busy || st.ProgressTotal != 0 {
+		t.Fatalf("a fresh service already reports something: %+v", st)
+	}
+	if _, err := svc.Install(context.Background(), "mmcblk1"); err != nil {
+		t.Fatal(err)
+	}
+	st := svc.Status(context.Background())
+	if !st.Done || st.DoneAt.IsZero() {
+		t.Fatalf("after an install: done=%v at %v", st.Done, st.DoneAt)
+	}
+	if st.Busy || st.ProgressDone != 0 || st.ProgressTotal != 0 {
+		t.Fatalf("after an install: busy=%v progress=%d/%d", st.Busy, st.ProgressDone, st.ProgressTotal)
+	}
+}
+
 func TestFlashServiceOneLineWithoutInternalFlash(t *testing.T) {
 	b := newFlashBoard(t)
 	if err := os.RemoveAll(filepath.Join(b.img.SysBlock, "mmcblk1")); err != nil {
