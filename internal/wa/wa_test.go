@@ -5,7 +5,10 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow/proto/waCommon"
+	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waWa6"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
@@ -146,5 +149,47 @@ func TestConvertPlainReplyIsNotATranscription(t *testing.T) {
 	}
 	if m := convert(evt); m == nil || m.TranscriptionOf != "" {
 		t.Fatalf("plain reply treated as a transcription: %+v", m)
+	}
+}
+
+// The phone's "Linked devices" list shows "<browser> (<os>)": a plain
+// WhatsApp Web session in Chrome on Ubuntu is what this device claims to be,
+// and the library's current app version travels with it.
+func TestDevicePresentsAsChromeOnUbuntu(t *testing.T) {
+	dp := store.DeviceProps
+	if got := dp.GetPlatformType(); got != waCompanionReg.DeviceProps_CHROME {
+		t.Errorf("PlatformType = %v, want CHROME", got)
+	}
+	if got := dp.GetOs(); got != "Ubuntu" {
+		t.Errorf("Os = %q, want Ubuntu", got)
+	}
+	if got := dp.GetOs(); got == DeviceName {
+		t.Errorf("Os still names the tool: %q", got)
+	}
+	v := store.GetWAVersion()
+	av := dp.GetVersion()
+	if av.GetPrimary() != v[0] || av.GetSecondary() != v[1] || av.GetTertiary() != v[2] {
+		t.Errorf("AppVersion = %d.%d.%d, want %s", av.GetPrimary(), av.GetSecondary(), av.GetTertiary(), v)
+	}
+	if dp.GetRequireFullSync() {
+		t.Error("RequireFullSync is on: the phone would push the whole history")
+	}
+	// The request for as little history as possible must survive the change.
+	if h := dp.GetHistorySyncConfig(); h.GetFullSyncDaysLimit() != 1 ||
+		h.GetRecentSyncDaysLimit() != 1 || h.GetInitialSyncMaxMessagesPerChat() != 1 {
+		t.Errorf("history limits = %d/%d/%d", h.GetFullSyncDaysLimit(), h.GetRecentSyncDaysLimit(),
+			h.GetInitialSyncMaxMessagesPerChat())
+	}
+	// The web-client user agent is what makes the server treat the connection
+	// as a browser session at all; it must not be overridden to something else.
+	ua := store.BaseClientPayload.GetUserAgent()
+	if ua.GetPlatform() != waWa6.ClientPayload_UserAgent_WEB {
+		t.Errorf("UserAgent platform = %v, want WEB", ua.GetPlatform())
+	}
+	if got := store.BaseClientPayload.GetWebInfo().GetWebSubPlatform(); got != waWa6.ClientPayload_WebInfo_WEB_BROWSER {
+		t.Errorf("WebSubPlatform = %v, want WEB_BROWSER", got)
+	}
+	if got := ua.GetOsVersion(); got != v.String() {
+		t.Errorf("UserAgent OsVersion = %q, want %q", got, v.String())
 	}
 }

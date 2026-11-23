@@ -30,8 +30,15 @@ import (
 	"github.com/emdioh/wa-transcriber/internal/status"
 )
 
-// DeviceName is shown in the phone's "Linked devices" list.
+// DeviceName is the tool's own name, used in logs, the web UI and !status.
+// It is deliberately *not* what the phone shows: see init below, the linked
+// device presents itself as a WhatsApp Web session in Chrome on Ubuntu.
 const DeviceName = "WA Transcriber"
+
+// deviceOS is the operating system a WhatsApp Web session in Chrome reports.
+// The phone renders "<browser> (<os>)" in Linked devices, so this shows up as
+// "Chrome (Ubuntu)".
+const deviceOS = "Ubuntu"
 
 // Options configures Open.
 type Options struct {
@@ -73,9 +80,17 @@ type groupEntry struct {
 const groupCacheTTL = 2 * time.Minute
 
 func init() {
+	// Present as a plain WhatsApp Web session: the phone's "Linked devices"
+	// list shows "Chrome (Ubuntu)" instead of a strange desktop client, and
+	// the pair-code request takes its type from PlatformType as well. The
+	// app version comes from the library (store.GetWAVersion), so it moves
+	// with the library instead of looking like a client from 2015.
+	//
+	// These props travel with the pairing handshake only: an already linked
+	// device keeps the identity it registered with until it is paired again.
+	store.SetOSInfo(deviceOS, store.GetWAVersion())
+	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
 	// Only new messages matter: ask the phone for as little history as possible.
-	store.DeviceProps.Os = proto.String(DeviceName)
-	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
 	store.DeviceProps.RequireFullSync = proto.Bool(false)
 	if h := store.DeviceProps.HistorySyncConfig; h != nil {
 		h.FullSyncDaysLimit = proto.Uint32(1)

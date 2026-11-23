@@ -74,6 +74,18 @@ interface and to transcription through `bot.Transcriber`; `transcribe` and
 `web` depend on `config`/`status`; `wa` depends on `bot` only for the
 `bot.Message`/`bot.Quote` types. Nothing depends on `main`.
 
+### Device identity shown to WhatsApp
+
+The companion registers itself as a plain **WhatsApp Web session in Chrome on
+Ubuntu** (`internal/wa` `init`: `store.SetOSInfo("Ubuntu",
+store.GetWAVersion())` and `DeviceProps.PlatformType = CHROME`), so the phone's
+"Linked devices" list reads `Chrome (Ubuntu)` instead of an unknown desktop
+client; the pair-code request takes its type from the same field. History sync
+is asked for as little as possible (one day, one message per chat) and
+`RequireFullSync` stays off. These props are part of the pairing handshake
+only: a device paired before the change keeps the identity it registered with
+until it is paired again.
+
 ### Main flow: a voice note arrives
 
 ```
