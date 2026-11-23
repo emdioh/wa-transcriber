@@ -14,10 +14,16 @@ LDFLAGS := -s -w -X main.version=$(VERSION) -X main.buildTime=$(BUILDTIME) \
 GOBUILD := CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)"
 PKG := ./cmd/wa-transcriber
 
-.PHONY: build build-arm7 build-arm64 build-amd64 dist test vet docker sign-manifest
+.PHONY: build build-arm7 build-arm64 build-amd64 dist test vet docker sign-manifest serialrun
 
 build:
 	$(GOBUILD) -o wa-transcriber $(PKG)
+
+# The serial console runner (tools/serialrun): built into the repository root,
+# where `make dist` does not look, so it never ends up in a release. See the
+# package comment in tools/serialrun/main.go for how to use it.
+serialrun:
+	go build -o serialrun ./tools/serialrun
 
 build-arm7:
 	mkdir -p dist
