@@ -58,6 +58,12 @@ func TestPtyEndToEnd(t *testing.T) {
 		{name: "hash in the command", cmd: "echo a # b", wantCode: 0, wantOut: "a\n"},
 		// The command must not run in a subshell: cd has to stick.
 		{name: "cd takes effect", cmd: "cd /tmp; pwd", wantCode: 0, wantOut: "/tmp\n"},
+		// A command that prints the markers with the right nonce is
+		// printing its own command line (which contains them); the shell
+		// still ends the run with its own tag. The fake one below uses the
+		// wrong digits and must not end the session early either.
+		{name: "fake end tag with digits", cmd: "echo __SRUN_E__deadbeefdeadbeef:3", wantCode: 0,
+			wantOut: "__SRUN_E__deadbeefdeadbeef:3\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -223,7 +229,10 @@ func TestPtyLoginDanceOnAGetty(t *testing.T) {
 	defer p.wait(time.Second)
 	code, err := converse(p, sessionOptions{
 		dev: "pty", user: "root", idle: 10 * time.Second, prompt: 5 * time.Second,
-		cmd: "echo hello from the board",
+		// The dance is the console's side of the session, so it is shown
+		// only with -verbose; stdout is the command's output either way.
+		verbose: true,
+		cmd:     "echo hello from the board",
 	}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("session failed after %s: %v\nstdout:\n%s\nstderr:\n%s",

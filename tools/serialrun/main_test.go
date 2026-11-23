@@ -17,7 +17,8 @@ func TestRunUsage(t *testing.T) {
 		{"no command", nil, "missing the command"},
 		{"two arguments", []string{"a", "b"}, "one quoted argument"},
 		{"empty command", []string{"   "}, "empty"},
-		{"zero idle", []string{"-idle", "0", "true"}, "-idle"},
+		{"negative idle", []string{"-idle", "-1s", "true"}, "-idle"},
+		{"zero timeout", []string{"-timeout", "0", "true"}, "-timeout"},
 		{"negative prompt", []string{"-prompt", "-1s", "true"}, "-prompt"},
 		{"unknown flag", []string{"-nope", "true"}, "flag provided but not defined"},
 	}

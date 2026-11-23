@@ -28,14 +28,17 @@ func endsInShellPrompt(line string) bool {
 // GNU/Linux ... login:"). getty writes it with no newline after it, so the
 // line here is whatever stood before the prompt once the stream went quiet.
 func endsInLogin(line string) bool {
-	return strings.HasSuffix(strings.ToLower(line), "login:")
+	// getty writes "hostname login: " with a trailing space and no newline;
+	// matching only a line that ends in "login:" never fired on the board,
+	// so a console that had dropped to the login prompt could only time out.
+	return strings.HasSuffix(strings.ToLower(strings.TrimRight(line, " \t")), "login:")
 }
 
 // endsInPassword reports the getty prompt for the account's secret. On some
 // gettys it is preceded by the user name on the same line, so only the tail
 // counts.
 func endsInPassword(line string) bool {
-	t := strings.TrimRight(line, " ")
+	t := strings.TrimRight(line, " \t")
 	if !strings.HasSuffix(t, ":") {
 		return false
 	}

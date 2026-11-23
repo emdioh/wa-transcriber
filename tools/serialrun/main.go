@@ -51,17 +51,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serialrun", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (
-		dev    = fs.String("dev", "", "serial device (default: the most recent /dev/ttyACM* or /dev/ttyUSB*)")
-		user   = fs.String("user", "root", "login name sent when the board asks for one; the password is empty")
-		idle   = fs.Duration("idle", 120*time.Second, "safety net for a hung board: give up after the console has been silent this long (never the mechanism that ends a run)")
-		prompt = fs.Duration("prompt", 20*time.Second, "how long the board may keep the shell prompt from appearing")
-		quiet  = fs.Bool("quiet", false, "print only the command's output on stdout; no console noise to stderr")
+		dev     = fs.String("dev", "", "serial device (default: the most recent /dev/ttyACM* or /dev/ttyUSB*)")
+		user    = fs.String("user", "root", "login name sent when the board asks for one; the password is empty")
+		timeout = fs.Duration("timeout", 15*time.Second, "give up after this long, whatever the console is doing (the one bound on a hung or silent board; raise it for a long command)")
+		idle    = fs.Duration("idle", 0, "give up after the console has been silent this long (default: the timeout; it is a safety net, never the mechanism that ends a run)")
+		prompt  = fs.Duration("prompt", 0, "how long the board may keep the shell prompt from appearing (default: the timeout)")
+		quiet   = fs.Bool("quiet", false, "same as the default, which already prints only the command's output: kept so old callers keep working")
+		verbose = fs.Bool("verbose", false, "also show the console's side on stderr: the login dialogue, the answers sent, a note about tag-like lines in the output")
 	)
 	usage := func(msg string) int {
 		if msg != "" {
 			fmt.Fprintf(stderr, "serialrun: %s\n", msg)
 		}
-		fmt.Fprint(stderr, "usage: serialrun [-dev DEV] [-user NAME] [-idle DUR] [-prompt DUR] [-quiet] 'command'\n")
+		fmt.Fprint(stderr, "usage: serialrun [-dev DEV] [-user NAME] [-timeout DUR] [-idle DUR] [-prompt DUR] [-verbose] 'command'\n")
 		return exitUsage
 	}
 	if err := fs.Parse(args); err != nil {
@@ -78,10 +80,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return usage("give the whole command as one quoted argument")
 	case strings.TrimSpace(rest[0]) == "":
 		return usage("the command is empty")
-	case *idle <= 0:
-		return usage("-idle must be positive (it is a safety net, not a wait)")
-	case *prompt <= 0:
-		return usage("-prompt must be positive")
+	case *timeout <= 0:
+		return usage("-timeout must be positive")
+	}
+	// The silence guard and the prompt wait default to the whole budget: one
+	// flag bounds a hung board, the other two only refine it and say why.
+	if *idle == 0 {
+		*idle = *timeout
+	}
+	if *prompt == 0 {
+		*prompt = *timeout
+	}
+	if *idle <= 0 || *prompt <= 0 {
+		return usage("-idle and -prompt must be positive")
 	}
 	if *dev == "" {
 		var err error
@@ -91,7 +102,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	opts := sessionOptions{dev: *dev, user: *user, idle: *idle, prompt: *prompt, quiet: *quiet, cmd: rest[0]}
+	opts := sessionOptions{dev: *dev, user: *user, timeout: *timeout, idle: *idle, prompt: *prompt, quiet: *quiet, verbose: *verbose, cmd: rest[0]}
 	code, err := session(opts, stdout, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "serialrun: %v\n", err)
@@ -114,6 +125,15 @@ func session(o sessionOptions, stdout, stderr io.Writer) (int, error) {
 		return 0, &consoleError{dev: o.dev, msg: "open: " + err.Error()}
 	}
 	defer f.Close()
+	// Wake the console before the reader starts: getty prints its prompt only
+	// when input arrives, and a prompt printed before this process opened the
+	// port was dropped by the kernel. Sending it here, with nobody listening
+	// yet, leaves its echo waiting in the device instead of racing the first
+	// read; a bare CR is an empty line at a shell prompt and nothing at all at
+	// "login:".
+	if _, err := f.WriteString("\r"); err != nil {
+		return 0, &consoleError{dev: o.dev, msg: "wake the console: " + err.Error()}
+	}
 	return runOn(f, o, stdout, stderr)
 }
 
@@ -124,6 +144,23 @@ func runOn(f *os.File, o sessionOptions, stdout, stderr io.Writer) (int, error) 
 	if restore, err := prepareHost(f); err == nil {
 		defer restore()
 	}
+	// One hard deadline for the whole call, whatever phase it is in. The
+	// idle and prompt deadlines below are refinements (they say *why* the
+	// board went quiet); this one is the guarantee that a call always ends,
+	// which is what makes the tool safe to use from a script.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-done:
+			return
+		case <-time.After(o.timeout):
+			fmt.Fprintf(stderr, "serialrun: gave up after %s (%s); the board said nothing to finish the call\n", o.timeout, o.dev)
+			// The reader may be blocked on the port; exiting the process is
+			// the only thing that reliably gives the console back.
+			os.Exit(2)
+		}
+	}()
 	p := newPort(f, o.idle, o.prompt)
 	p.start()
 	// The reader is left to notice the stop on its own: waiting for it here
@@ -135,12 +172,19 @@ func runOn(f *os.File, o sessionOptions, stdout, stderr io.Writer) (int, error) 
 
 // sessionOptions is what the program was asked to do.
 type sessionOptions struct {
-	dev    string
-	user   string
-	idle   time.Duration
-	prompt time.Duration
-	quiet  bool
-	cmd    string
+	dev  string
+	user string
+	// timeout bounds the whole call: prompt, login and command together. It
+	// is the one guarantee against a hung or silent console.
+	timeout time.Duration
+	idle    time.Duration
+	prompt  time.Duration
+	quiet   bool
+	// verbose shows the console's side of the session on stderr. It is off
+	// by default and independent of quiet: stdout is the command's output
+	// either way, stderr is the console's own talk and problems.
+	verbose bool
+	cmd     string
 }
 
 // converse is the session itself: it needs the port's event stream and bytes
@@ -151,19 +195,18 @@ func converse(p *port, o sessionOptions, stdout, stderr io.Writer) (int, error) 
 		return 0, &consoleError{dev: o.dev, msg: "random nonce: " + err.Error()}
 	}
 	c := &console{
-		rw:     p.rw,
-		events: p.events,
-		errw:   stderr,
-		idle:   o.idle,
-		prompt: o.prompt,
-		dev:    o.dev,
+		rw:      p.rw,
+		events:  p.events,
+		out:     stdout,
+		errw:    stderr,
+		verbose: o.verbose && !o.quiet,
+		idle:    o.idle,
+		prompt:  o.prompt,
+		dev:     o.dev,
 		markers: markers{
 			begin: "__SRUN_B__" + nonce,
 			end:   "__SRUN_E__" + nonce,
 		},
-	}
-	if !o.quiet {
-		c.out = stdout
 	}
 	if err := c.answerLogin(newLogin(o.user)); err != nil {
 		return 0, err
