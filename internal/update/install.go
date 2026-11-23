@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -25,8 +26,25 @@ type Installer struct {
 	Dir    string
 	Client *http.Client
 	Now    func() time.Time
+	// FreeSpace reports the bytes available in a directory. Nil is statfs.
+	// A download that does not fit fails half way through, which looks like a
+	// network problem; the check turns it into one sentence before the first
+	// byte (a nearly full /data on a small card).
+	FreeSpace func(dir string) (int64, error)
 
 	mu sync.Mutex
+}
+
+// freeSpace is the request's own probe, or statfs.
+func (i *Installer) freeSpace(dir string) (int64, error) {
+	if i.FreeSpace != nil {
+		return i.FreeSpace(dir)
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(dir, &st); err != nil {
+		return 0, err
+	}
+	return int64(st.Bavail) * int64(st.Bsize), nil
 }
 
 func (i *Installer) now() time.Time {
@@ -82,6 +100,11 @@ func (i *Installer) Fetch(ctx context.Context, url string, m *Manifest, assetKey
 		return zero, fmt.Errorf("update: create %s: %w", upd, err)
 	}
 
+	// Room for the file before the first byte: the .part is the whole asset.
+	if free, err := i.freeSpace(upd); err == nil && free > 0 && free < asset.Size {
+		return zero, fmt.Errorf("update: %s needs %d MB and %s has %d MB free",
+			asset.File, asset.Size>>20, upd, free>>20)
+	}
 	// A superseded download from an earlier run is useless: drop it first.
 	if parts, err := filepath.Glob(filepath.Join(upd, "*.part")); err == nil {
 		for _, p := range parts {

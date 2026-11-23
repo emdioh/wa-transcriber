@@ -650,3 +650,48 @@ func TestCheckerBadSignatureEncoding(t *testing.T) {
 		t.Fatal("Latest accepted an undecodable signature")
 	}
 }
+
+// TestFetchRefusesWhenTheDiskIsFull pins the check that turns a half-written
+// download into one sentence: a nearly full /data used to fail in the middle,
+// looking like a network problem.
+func TestFetchRefusesWhenTheDiskIsFull(t *testing.T) {
+	rel, pub := signedRelease(t, "v0.2.0")
+	_ = pub
+	srv := httptest.NewServer(rel.handler())
+	defer srv.Close()
+	dir := t.TempDir()
+	inst := &Installer{
+		Dir:       filepath.Join(dir, "bin"),
+		Client:    srv.Client(),
+		FreeSpace: func(string) (int64, error) { return 1024, nil },
+	}
+	m := &Manifest{
+		Schema:  1,
+		Version: "v0.2.0",
+		Assets:  map[string]Asset{"linux-amd64": {File: "wa-transcriber-linux-amd64", SHA256: strings.Repeat("a", 64), Size: 8 << 20}},
+	}
+	_, err := inst.Fetch(context.Background(), srv.URL+"/asset", m, "linux-amd64")
+	if err == nil || !strings.Contains(err.Error(), "free") {
+		t.Fatalf("Fetch = %v, want a free-space refusal", err)
+	}
+	if rel.manifestHits.Load() != 0 {
+		t.Fatal("Fetch downloaded something before checking the space")
+	}
+	if got := dirEntries(t, filepath.Join(dir, "bin")); len(got) != 0 {
+		t.Fatalf("something was written: %v", got)
+	}
+}
+
+// dirEntries lists a directory, or nothing when it does not exist.
+func dirEntries(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}

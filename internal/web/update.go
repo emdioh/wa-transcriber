@@ -42,8 +42,12 @@ var (
 	// browser before the restart replaces the process (same value as
 	// restartPage, which has the same problem).
 	updateRestartDelay = 500 * time.Millisecond
-	// updateActionTimeout bounds one button: a CDN check or a download.
-	updateActionTimeout = 60 * time.Second
+	// updateCheckTimeout bounds the check: two small files from a CDN.
+	updateCheckTimeout = 60 * time.Second
+	// updateInstallTimeout bounds a binary install. It used to be the same 60
+	// seconds as the check, which cancelled every download slower than about
+	// 3 Mbit/s: 24 MB on a weak WiFi dongle takes minutes (wat-t3l.8).
+	updateInstallTimeout = 10 * time.Minute
 	// updateReloadSeconds is what the card tells the owner to wait: the
 	// restart delay plus a generous margin for the new process to listen.
 	updateReloadSeconds = int(updateRestartDelay/time.Second) + 10
@@ -108,7 +112,11 @@ func (s *Server) updateAction(w http.ResponseWriter, r *http.Request, what, name
 		http.NotFound(w, r)
 		return UpdateStatus{}, false
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), updateActionTimeout)
+	timeout := updateCheckTimeout
+	if name != "check" {
+		timeout = updateInstallTimeout
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	var (
 		st  UpdateStatus

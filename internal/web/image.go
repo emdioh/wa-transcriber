@@ -101,7 +101,7 @@ func (s *Server) imageAction(w http.ResponseWriter, r *http.Request, what, name 
 		http.NotFound(w, r)
 		return ImageStatus{}, false
 	}
-	timeout := updateActionTimeout
+	timeout := updateCheckTimeout
 	if name == "install" {
 		timeout = imageInstallTimeout
 	}
