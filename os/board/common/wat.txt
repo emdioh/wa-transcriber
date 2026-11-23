@@ -14,6 +14,17 @@ setup_ap_key=change-me-please
 # country: ISO 3166-1 alpha-2 code for the WiFi regulatory domain.
 country=IT
 
+# wifi_ssid / wifi_passphrase: join this WiFi network on boot, without going
+#                through the setup access point and the web UI. The network is
+#                added to /data/wifi.json at start (the passphrase is turned
+#                into the WPA key and is never stored) and shows up on the
+#                Network page like one added there. The WPA passphrase must be
+#                8 to 63 characters; a wrong one is logged as a warning and
+#                ignored, and the device falls back to the setup AP. Leave
+#                both lines commented out to configure the network in the UI.
+# wifi_ssid=Casa
+# wifi_passphrase=change-me-too
+
 # hostname: mDNS name, <hostname>.local (default wa).
 hostname=wa
 

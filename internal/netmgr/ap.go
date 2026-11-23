@@ -154,19 +154,14 @@ func (a *AP) dnsmasqArgs() []string {
 	}
 }
 
-// watValue reads key=value lines from wat.txt.
+// watValue reads key=value lines from wat.txt (shared parser, see
+// provision.go for the Windows-line-ending and comment handling).
 func (a *AP) watValue(want string) string {
 	data, err := os.ReadFile(a.WatTxtPath)
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		key, val, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && key == want {
-			return strings.TrimSpace(val)
-		}
-	}
-	return ""
+	return watValue(data, want)
 }
 
 func renderHostapdConf(ifname, ssid, country, key string) string {

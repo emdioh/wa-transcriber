@@ -675,7 +675,11 @@ criteria below need the boards.
    kernel, DTB and `wat.txt`; (2) root, ext4, mounted read-only;
    (3) data, ext4 label `DATA`, created at first boot.
    - `wat.txt` template: `setup_ap_key=`, `country=IT`, `hostname=wa`,
-     with comments explaining each line.
+     optional `wifi_ssid=`/`wifi_passphrase=` (imported into
+     `/data/wifi.json` when the network manager starts, so a card can be
+     prepared with the home network and joins on its own first boot; the
+     import is idempotent and never promotes the network over one added
+     later in the UI), with comments explaining each line.
    - first-boot script `/etc/init.d/S01data`: if no partition labelled
      `DATA` exists, create it with `sfdisk --append` in the free space, run
      `mkfs.ext4 -L DATA`, then mount `/data` with `noatime`. Must be

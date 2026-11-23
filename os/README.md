@@ -119,6 +119,25 @@ your country code and, if you want a login shell on the board, `console=`
 (see [Debug console](#debug-console)). The partition is mounted read-only at
 `/boot` at boot, and the file is only read then.
 
+`wat.txt` can also carry the WiFi network itself, which skips the setup AP
+entirely on the first boot:
+
+```ini
+wifi_ssid=Casa
+wifi_passphrase=change-me-too
+```
+
+The device imports both lines into `/data/wifi.json` when the network manager
+starts (the passphrase becomes the WPA key and is never stored, and the
+network appears on the Network page like one added there). Importing is
+idempotent: an unchanged `wat.txt` does not reorder the saved networks, so a
+network added later in the UI is not pushed behind it. A passphrase outside
+8–63 characters is logged as a warning and ignored, and the device falls back
+to the setup AP. **The boot partition is unencrypted**: anyone who takes the
+card reads the passphrase, and it stays there after the import — `console=`
+ships as `all` for the same reason (physical access), so treat a card with
+`wifi_passphrase` in it as a secret.
+
 First boot:
 
 1. Power the board with no cable and no saved network. After ~30 s a WiFi
@@ -129,6 +148,11 @@ First boot:
 3. Set the web UI password, link WhatsApp, then add your home WiFi on the
    Network page. The AP disappears and the device joins your network;
    `http://wa.local/` works from any computer on it.
+
+With `wifi_ssid`/`wifi_passphrase` in `wat.txt` steps 1 and 2 do not happen:
+the device joins the named network while it boots (Ethernet, if plugged, is
+tried at the same time) and the UI is reachable at `http://wa.local/` from
+that network.
 
 `/data` (partition 3) is created on that first boot and is where everything
 persistent lives: back it up by copying the partition (or at least

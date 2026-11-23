@@ -97,6 +97,33 @@ func (s *WifiStore) Save(ssid, passphrase string) error {
 	return nil
 }
 
+// Ensure saves ssid with passphrase unless it is already saved with exactly
+// that passphrase, and reports whether anything changed. It is the import
+// path (wat.txt), so a boot that changes nothing must not reorder the list:
+// Save always promotes the network it touches, and a card prepared once must
+// not keep pushing that network ahead of the one added in the web UI.
+func (s *WifiStore) Ensure(ssid, passphrase string) (bool, error) {
+	key, err := pbkdf2.Key(sha1.New, passphrase, []byte(ssid), 4096, 32)
+	if err != nil {
+		return false, err
+	}
+	psk := hex.EncodeToString(key)
+	s.mu.Lock()
+	for _, n := range s.cur.Networks {
+		if n.SSID == ssid && n.PSK == psk {
+			s.mu.Unlock()
+			return false, nil
+		}
+	}
+	s.mu.Unlock()
+	// A concurrent Save is harmless: the worst case is the same entry saved
+	// twice, with the same passphrase.
+	if err := s.Save(ssid, passphrase); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // MarkOK records a successful connection and moves ssid to the front
 // (highest priority).
 func (s *WifiStore) MarkOK(ssid string, at time.Time) error {

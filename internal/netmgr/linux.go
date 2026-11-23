@@ -21,7 +21,9 @@ type managed struct {
 	log  *slog.Logger
 	// store holds the saved WiFi networks (nil: none persisted).
 	store *WifiStore
-	addrs func() []status.Addr
+	// watTxtPath is the boot file the WiFi details can be provisioned from.
+	watTxtPath string
+	addrs      func() []status.Addr
 	// paired tells whether WhatsApp is linked (drives the AP policy).
 	paired func() bool
 
@@ -81,6 +83,7 @@ func newManaged(store *WifiStore, addrs func() []status.Addr, paired func() bool
 		run:          execRunner{},
 		log:          log,
 		store:        store,
+		watTxtPath:   WatTxtPath,
 		addrs:        addrs,
 		paired:       paired,
 		policy:       APAuto,
@@ -96,6 +99,14 @@ func newManaged(store *WifiStore, addrs func() []status.Addr, paired func() bool
 func (m *managed) Start(ctx context.Context) error {
 	if err := m.discover(); err != nil {
 		return err
+	}
+	// The card can carry the WiFi details (wat.txt): import them before the
+	// first policy tick, so a prepared card joins by itself. Failure is not
+	// fatal: the device still comes up in the setup AP with the cable/UI.
+	if ssid, err := ProvisionWifi(m.watTxtPath, m.store); err != nil {
+		m.log.Warn("network manager: wifi from wat.txt ignored", "file", m.watTxtPath, "err", err)
+	} else if ssid != "" {
+		m.log.Info("network manager: wifi network from wat.txt saved", "ssid", ssid, "file", m.watTxtPath)
 	}
 	m.log.Info("network manager: interfaces", "ethernet", len(m.eths), "wifi", len(m.wifis))
 	go m.loop(ctx)
