@@ -136,6 +136,46 @@ was reset, so it sits in setup mode with no config.
 - Update `docs/STATUS.md` when something is verified or a limitation
   changes; update `docs/ARCHITECTURE.md` when a design detail changes.
 
+## Subagents: one worktree each, merged and removed when done
+
+Every subagent writes code in its **own git worktree**, never in the primary
+checkout, and the task ends with the branch merged into `main` and the worktree
+gone. The primary checkout stays the place where docs, the beads database and
+the final commits live.
+
+Create it before dispatching, and hand the path to the subagent as its working
+directory:
+
+```bash
+git worktree add -b <topic> ../wa-transcriber-<topic>     # e.g. -b backup-restore
+```
+
+Tell the subagent, in the task text: this path is its only checkout, it commits
+on its own branch, it does not switch branches, push, touch `docs/`, `os/` or
+the beads database. Say what it must not edit, because a worktree is not an
+isolation boundary for the *board* or the Dolt database — only for the files.
+
+When it reports back:
+
+1. `git -C ../wa-transcriber-<topic> status --short` — a clean worktree is a
+   precondition for `git worktree remove`; anything uncommitted there is lost
+   when the worktree goes, so harvest it first (a killed subagent leaves edits
+   and sometimes useful ones).
+2. `git log --oneline --all --decorate -5` — check the work really landed on
+   the topic branch. A subagent that commits from the wrong working directory
+   puts it on `main` directly (that happened once with the backup feature);
+   the decoration shows it before any cleanup.
+3. Run the suite **in the worktree**: `gofmt -l cmd internal tools`,
+   `go vet ./...`, `go test -race ./...`. A green branch is the merge
+   condition, not a green primary checkout.
+4. Merge on `main`: `git merge --no-ff <topic>` (a merge commit keeps the
+   subagent's work identifiable), then
+   `git worktree remove ../wa-transcriber-<topic>`, `git branch -d <topic>`,
+   `git worktree prune`. Finish with `git worktree list` showing only the
+   primary checkout — if it lists more, the cleanup is not done.
+5. File and close the beads in the **primary** checkout, together with the
+   status/doc updates, and commit them there.
+
 ## Work tracking: beads (`bd`)
 
 Work items live in the beads database (`.beads/`, Dolt, issue prefix `wat`),
