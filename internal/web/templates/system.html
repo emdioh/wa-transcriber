@@ -122,6 +122,19 @@
   {{end}}
 </section>
 {{end}}
+{{with .Backup}}
+<section class="card">
+  <h2>Backup</h2>
+  <p>Everything that makes this device itself: the settings and the password, the transcription API key, the WhatsApp link and the saved WiFi networks. Keep the file somewhere safe and upload it after a reflash, on a new card or on a replaced device: it comes back paired, with the same key and the same networks.</p>
+  <p><strong>⚠ The file contains the transcription API key, the WhatsApp session and the saved WiFi passwords.</strong> Anyone who has it can use your API key, act as your WhatsApp device and join your networks. Store it like a password, and delete old copies.</p>
+  <p><a class="button secondary" href="/system/backup" download>Download the backup</a></p>
+  <form method="post" action="/system/restore" enctype="multipart/form-data" class="stack">
+    <label>Restore a backup <input type="file" name="file" accept=".gz,.tgz,application/gzip" required></label>
+    <button>Upload and restart</button>
+  </form>
+  <p class="muted">Uploading replaces the settings, the WhatsApp link and the WiFi networks on this device with the ones in the file, then restarts it: reload this page in about {{.ReloadSecs}} seconds. Take a fresh download first if you are not sure. A file that is damaged or not a backup is refused and nothing changes.</p>
+</section>
+{{end}}
 <section class="card danger">
   <h2>Factory reset</h2>
   <p>Unlinks WhatsApp and erases every setting, the password and the saved WiFi networks. The device restarts in setup mode. Same as <code>!reset</code>.</p>

@@ -1,11 +1,23 @@
 {{define "content"}}
 <section class="card">
+  <h2>Welcome</h2>
   <p>Choose the password that protects this page. It guards your API key and your WhatsApp link, so pick a real one.</p>
   <form method="post" action="/setup" class="stack">
-    <label>Password <input type="password" name="password" minlength="{{.}}" required autocomplete="new-password" autofocus></label>
-    <label>Repeat it <input type="password" name="confirm" minlength="{{.}}" required autocomplete="new-password"></label>
+    <label>Password <input type="password" name="password" minlength="{{.MinPasswordLen}}" required autocomplete="new-password" autofocus></label>
+    <label>Repeat it <input type="password" name="confirm" minlength="{{.MinPasswordLen}}" required autocomplete="new-password"></label>
     <button>Save password</button>
   </form>
-  <p class="hint">At least {{.}} characters. You can change it later here or with <code>!password</code> in your own WhatsApp chat.</p>
+  <p class="hint">At least {{.MinPasswordLen}} characters. You can change it later here or with <code>!password</code> in your own WhatsApp chat.</p>
 </section>
+{{if .CanRestore}}
+<section class="card">
+  <h2>Restore a backup</h2>
+  <p>Reflashed the card, or starting from a new one? Upload the backup you downloaded from the System page: it brings back the settings, the password, the transcription key, the WhatsApp link and the saved WiFi networks, so the phone stays paired and you log in again with the password it had then.</p>
+  <form method="post" action="/restore" enctype="multipart/form-data" class="stack">
+    <label>Backup file <input type="file" name="file" accept=".gz,.tgz,application/gzip" required></label>
+    <button>Upload and restart</button>
+  </form>
+  <p class="muted">The device restarts when the file is in place and comes back as it was; reload this page in about ten seconds. A file that is damaged or not a backup is refused and nothing changes. If you would rather start over, set a password above instead.</p>
+</section>
+{{end}}
 {{end}}

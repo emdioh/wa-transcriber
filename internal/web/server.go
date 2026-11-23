@@ -95,9 +95,13 @@ type Options struct {
 	// and an installer whose status has an Error shows that one line (a board
 	// without internal flash says so) instead of the button.
 	FlashInstaller FlashInstaller
-	// Restart re-execs the process after an install or a rollback (main logs
-	// its own failure).
+	// Restart re-execs the process after an install, a rollback or a restore
+	// (main logs its own failure).
 	Restart func()
+	// DataDir is the directory backup.Write reads and backup.Restore writes
+	// (config.json, the session, wifi.json). Empty hides the backup card and
+	// its routes answer 404, like a device that was not given a directory.
+	DataDir string
 }
 
 // Server serves the UI.
@@ -109,6 +113,9 @@ type Server struct {
 	mu       sync.Mutex
 	sessions map[string]session
 	loginMu  sync.Mutex
+	// claiming is held by a backup download, a restore and the first
+	// password: they all write or hand out config.json and the session.
+	claiming sync.Mutex
 
 	lastScan       time.Time
 	lastScanResult []netmgr.Network

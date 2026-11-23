@@ -67,6 +67,12 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /system/update/install", s.auth(s.updateInstall))
 	m.HandleFunc("POST /system/update/rollback", s.auth(s.updateRollback))
 	m.HandleFunc("POST /system/update/settings", s.auth(s.updateSettings))
+	// The backup card: no DataDir, no card and no routes.
+	m.HandleFunc("GET /system/backup", s.auth(s.downloadBackup))
+	m.HandleFunc("POST /system/restore", s.auth(s.restoreInstall))
+	// The way in after a reflash, which leaves the device unclaimed: it
+	// refuses as soon as a password exists (restoreAllowedByPasswordOnly).
+	m.HandleFunc("POST /restore", s.restoreFromSetup)
 	// Same rule as the binary card: no ImageUpdater, no route.
 	m.HandleFunc("POST /system/image/check", s.auth(s.imageCheck))
 	m.HandleFunc("POST /system/image/install", s.auth(s.imageInstall))
@@ -82,7 +88,20 @@ func (s *Server) setupPage(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/login")
 		return
 	}
-	s.render(w, r, "setup", "Welcome", MinPasswordLen)
+	// The setup page also offers the way back in after a reflash: restore
+	// the backup this device left behind (see restoreAllowedByPasswordOnly).
+	s.render(w, r, "setup", "Welcome", setupView{
+		MinPasswordLen: MinPasswordLen,
+		CanRestore:     s.opts.DataDir != "" && s.restoreAllowedByPasswordOnly(),
+	})
+}
+
+// setupView is the setup page.
+type setupView struct {
+	MinPasswordLen int
+	// CanRestore shows the "restore a backup" section: only while the device
+	// has no password (restoreAllowedByPasswordOnly).
+	CanRestore bool
 }
 
 func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
@@ -835,12 +854,18 @@ type systemView struct {
 	Image *imageView
 	// Flash is nil when the internal storage feature is off (M11).
 	Flash *flashView
+	// Backup is nil when the server was given no DataDir.
+	Backup *backupView
 }
 
 func (s *Server) systemPage(w http.ResponseWriter, r *http.Request) {
 	update, _ := s.updatePageView(r.Context())
 	image, _ := s.imagePageView(r.Context())
 	flash, _ := s.flashPageView(r.Context())
+	var bk *backupView
+	if s.opts.DataDir != "" {
+		bk = s.backupPageView()
+	}
 	s.render(w, r, "system", "System", systemView{
 		MinPasswordLen: MinPasswordLen,
 		Languages:      config.Languages,
@@ -848,6 +873,7 @@ func (s *Server) systemPage(w http.ResponseWriter, r *http.Request) {
 		Update:         update,
 		Image:          image,
 		Flash:          flash,
+		Backup:         bk,
 	})
 }
 

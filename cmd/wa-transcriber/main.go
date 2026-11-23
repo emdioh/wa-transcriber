@@ -302,6 +302,8 @@ func run() error {
 			Updater:        updater,
 			ImageUpdater:   imageUpdater,
 			FlashInstaller: flashInstaller,
+			// The backup card reads and rewrites the device state.
+			DataDir: *dataDir,
 			Restart: func() {
 				if err := restart(log, *bootstrap); err != nil {
 					log.Error("restart after the update failed", "err", err)
