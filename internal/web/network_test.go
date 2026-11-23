@@ -135,6 +135,63 @@ func TestNetworkForgetAndPolicy(t *testing.T) {
 	}
 }
 
+// The WiFi card is the config section for the connection: it names the
+// adapter, offers the scan and takes an SSID by hand, which is the only way
+// to join a hidden network.
+func TestNetworkPageHasWiFiSection(t *testing.T) {
+	h, nm := newNetHarness(t)
+	nm.interfaces = []netmgr.Interface{
+		{Name: "eth0", Kind: netmgr.KindEthernet, State: netmgr.StateUp},
+		{Name: "wlan0", Kind: netmgr.KindWiFi, State: netmgr.StateDown},
+	}
+	_, _, body := h.get(h.c, "/network")
+	for _, want := range []string{
+		"Adapter: <code>wlan0</code>",
+		"Scan for networks",
+		"Join a hidden network",
+		"Network name (SSID)",
+		"Setup access point",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+}
+
+// Without an adapter there is nothing to scan and no setup AP to run: say so
+// instead of offering a button that can only fail.
+func TestNetworkPageWithoutAdapter(t *testing.T) {
+	h, nm := newNetHarness(t)
+	nm.interfaces = []netmgr.Interface{
+		{Name: "eth0", Kind: netmgr.KindEthernet, State: netmgr.StateUp, IPs: []string{"10.0.0.2"}},
+	}
+	_, _, body := h.get(h.c, "/network")
+	if !strings.Contains(body, "No WiFi adapter is connected") {
+		t.Errorf("no-adapter hint missing: %s", body)
+	}
+	if strings.Contains(body, "Scan for networks") {
+		t.Errorf("scan offered without an adapter: %s", body)
+	}
+	if strings.Contains(body, "Setup access point") {
+		t.Errorf("setup AP policy offered without an adapter: %s", body)
+	}
+}
+
+// A hidden SSID never appears in a scan, so the manual form must save it.
+func TestNetworkConnectHiddenSSID(t *testing.T) {
+	h, nm := newNetHarness(t)
+	nm.interfaces = []netmgr.Interface{{Name: "wlan0", Kind: netmgr.KindWiFi, State: netmgr.StateUp}}
+	_, _, body := h.post(h.c, "/network/connect", url.Values{
+		"ssid": {"  CasaNascosta "}, "passphrase": {"longenough"}, "secured": {"1"},
+	})
+	if !strings.Contains(body, "Saved") {
+		t.Fatalf("hidden network not saved: %s", body)
+	}
+	if len(nm.savedCalls) != 1 || nm.savedCalls[0] != "CasaNascosta:longenough" {
+		t.Fatalf("savedCalls = %v", nm.savedCalls)
+	}
+}
+
 func TestNetworkPageWithoutManager(t *testing.T) {
 	h := newHarness(t)
 	h.setup()

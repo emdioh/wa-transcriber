@@ -613,6 +613,7 @@ type networkView struct {
 	Managed    bool
 	InAPMode   bool
 	Interfaces []netmgr.Interface
+	WiFi       []string // WiFi interface names: empty means no adapter
 	Scan       []netmgr.Network
 	ScanAge    string
 	Saved      []netmgr.SavedNetwork
@@ -634,6 +635,13 @@ func (s *Server) networkPage(w http.ResponseWriter, r *http.Request) {
 		v.Policy = string(s.opts.Network.APPolicy())
 	case s.opts.Addrs != nil:
 		v.Interfaces = netmgr.StatusFromAddrs(s.opts.Addrs()).Interfaces
+	}
+	// The WiFi card needs to know whether there is an adapter at all: with
+	// none, scanning is pointless and the setup AP cannot run.
+	for _, i := range v.Interfaces {
+		if i.Kind == netmgr.KindWiFi {
+			v.WiFi = append(v.WiFi, i.Name)
+		}
 	}
 	s.mu.Lock()
 	if time.Since(s.lastScan) < 2*time.Minute {

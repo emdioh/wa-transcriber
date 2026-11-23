@@ -542,7 +542,11 @@ it changes interfaces and binds port 53/67/5353).
     POSTs go through the same auth/Origin rules as the rest of the UI.
     Saving a network while connected through the AP must show a page saying
     "the device is switching networks: reconnect your phone to <SSID> and
-    open http://wa.local/".
+    open http://wa.local/". The WiFi card also takes an SSID and passphrase
+    typed by hand (a hidden network never appears in a scan), and when the
+    device has no WiFi adapter at all it says so instead of offering a scan
+    that can only fail — same for the AP policy, which is pointless without
+    an adapter to host it.
 12. **Reset and status**: `!reset` and the web factory reset call
     `Manager.Erase()` (delete `wifi.json`) before restarting; `!status`
     lists each interface with its mode (`eth0 192.168.1.40`, `wlan0 AP

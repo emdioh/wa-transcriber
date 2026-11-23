@@ -21,7 +21,14 @@
 {{if .Managed}}
 <section class="card">
   <h2>WiFi</h2>
+  {{if .WiFi}}
+  <p>Adapter: <code>{{join .WiFi ", "}}</code></p>
   <form method="post" action="/network/scan"><button>Scan for networks</button></form>
+  {{else}}
+  <p>No WiFi adapter is connected. Plug one that can host an access point (an
+  RT5370 or MT7612U dongle), or use the Ethernet cable. Saved WiFi networks
+  are used as soon as an adapter appears.</p>
+  {{end}}
   {{if .Scan}}
   <p>Networks found {{.ScanAge}}.</p>
   <table>
@@ -43,6 +50,19 @@
     {{end}}
   </table>
   {{end}}
+  <h3>Join a hidden network</h3>
+  <form method="post" action="/network/connect" class="stack">
+    <label>Network name (SSID)
+      <input name="ssid" required autocomplete="off" autocapitalize="none" spellcheck="false">
+    </label>
+    <label>Passphrase
+      <input type="password" name="passphrase" autocomplete="off">
+    </label>
+    <label><input type="checkbox" name="secured" value="1" checked> The network is protected (WPA2)</label>
+    <button>Join</button>
+  </form>
+  <p>The network name is case-sensitive. A hidden network does not show up in
+  the scan: type its name here.</p>
 </section>
 
 {{if .Saved}}
@@ -64,6 +84,7 @@
 </section>
 {{end}}
 
+{{if .WiFi}}
 <section class="card">
   <h2>Setup access point</h2>
   <form method="post" action="/network/policy">
@@ -77,6 +98,7 @@
     <button>Save</button>
   </form>
 </section>
+{{end}}
 {{else}}
 <section class="card">
   <p>The network is managed by the host (Docker or a regular computer), so there is nothing to set here.</p>
