@@ -28,3 +28,14 @@ rm -f "$TARGET_DIR/etc/init.d/S45wpa_supplicant" "$TARGET_DIR/etc/init.d/S95wpa_
 # Keep the image small: no docs, no locales.
 rm -rf "$TARGET_DIR/usr/share/man" "$TARGET_DIR/usr/share/doc" \
        "$TARGET_DIR/usr/share/info" 2>/dev/null || true
+
+# linux-firmware ships the MediaTek blobs under mediatek/, but Linux 6.1 asks
+# for them at the top of /lib/firmware (MT7662_FIRMWARE in mt76x2.h): link them
+# where mt76x2u looks, or the MT7612U dongle dies on "failed to load firmware".
+for fw in mt7662.bin mt7662_rom_patch.bin; do
+	if [ ! -f "$TARGET_DIR/lib/firmware/mediatek/$fw" ]; then
+		echo "post-build: missing lib/firmware/mediatek/$fw (linux-firmware MT76x2E)" >&2
+		exit 1
+	fi
+	ln -sf "mediatek/$fw" "$TARGET_DIR/lib/firmware/$fw"
+done

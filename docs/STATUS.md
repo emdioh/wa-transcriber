@@ -281,6 +281,13 @@ install, and the owner's real signing key.
   allows claims to be turned on (`-coord-claims`). In observe-only mode the
   duplicate is accepted by design.
 - One WhatsApp account per device.
+- WiFi hardware: the setup AP needs an adapter with `NL80211_IFTYPE_AP`. An
+  RT5370 (`rt2800usb`) needs no firmware at all; an MT7612U (`mt76x2u`) now
+  works because the images ship `mt7662*.bin` (before 2026-11-23 they did
+  not, so it failed on the missing blob). Realtek 8188/8192 dongles
+  (`rtl8xxxu`) are **client only** in Linux 6.1 — the driver advertises no AP
+  mode, so such a dongle can join a network but cannot serve the setup AP.
+  Details and the observed dongle: [hardware.md](hardware.md) §1.1.
 
 ## Code map
 

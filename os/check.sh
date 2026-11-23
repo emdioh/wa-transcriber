@@ -64,6 +64,22 @@ for board in rpi2 bbb; do
 	grep -q '^BR2_PACKAGE_UTIL_LINUX_PARTX=y$' "$defconfig" ||
 		fail "$board: partx is missing (needed to add the DATA partition)"
 
+	# The WiFi drivers in the kernel fragment need their blobs in the rootfs.
+	# A missing one is not a build error, it is a dead dongle on the board.
+	frag="$HERE/board/common/linux.fragment"
+	if grep -q '^CONFIG_MT76x2U=m$' "$frag"; then
+		grep -q '^BR2_PACKAGE_LINUX_FIRMWARE_MEDIATEK_MT76X2E=y$' "$defconfig" ||
+			fail "$board: mt76x2u needs linux-firmware MEDIATEK_MT76X2E (mt7662*.bin)"
+	fi
+	if grep -q '^CONFIG_RTL8XXXU=m$' "$frag"; then
+		grep -q '^BR2_PACKAGE_LINUX_FIRMWARE_RTL_81XX=y$' "$defconfig" ||
+			fail "$board: rtl8xxxu needs linux-firmware RTL_81XX (rtl8192eu_nic.bin)"
+	fi
+	if grep -q '^BR2_PACKAGE_LINUX_FIRMWARE_[A-Z0-9_]*=y$' "$defconfig"; then
+		grep -q '^BR2_PACKAGE_LINUX_FIRMWARE=y$' "$defconfig" ||
+			fail "$board: linux-firmware sub-options need BR2_PACKAGE_LINUX_FIRMWARE=y"
+	fi
+
 	# Every file the defconfig points at must exist.
 	for ref in $(sed -n 's/.*BR2_EXTERNAL_WAT_PATH)\([^"]*\)".*/\1/p' "$defconfig"); do
 		[ -e "$HERE$ref" ] || fail "$board: defconfig references missing file $ref"
@@ -229,6 +245,10 @@ grep -q 'mount .*\-t vfat .* /boot' "$OVL/etc/init.d/S00boot" ||
 	fail "S00boot does not mount the boot partition at /boot"
 grep -q 'mkdir -p "\$TARGET_DIR/boot"' "$HERE/board/common/post-build.sh" ||
 	fail "post-build.sh does not create the /boot mountpoint"
+# Linux 6.1 asks mt76x2u for mt7662*.bin at the top of /lib/firmware while
+# linux-firmware installs them under mediatek/.
+grep -qF 'ln -sf "mediatek/$fw" "$TARGET_DIR/lib/firmware/$fw"' "$HERE/board/common/post-build.sh" ||
+	fail "post-build.sh does not link mediatek/mt7662*.bin where the kernel looks"
 for s in S00boot S01data; do
 	grep -q '/usr/lib/wat/sd.sh' "$OVL/etc/init.d/$s" ||
 		fail "$s does not use the shared SD-card helpers"

@@ -32,14 +32,15 @@ phone connect. Fail → use an RT5370 or MT7612U dongle and repeat.
 
 | Date | Dongle (USB id, chipset) | Board | Verdict |
 |---|---|---|---|
-| 2026-11-23 | TP-Link TL-WN823N v2/v3, `2357:0109`, RTL8192EU rev B | BBB (host port) | **Not supported**: `rtl8xxxu` is in the kernel (`omap2plus_defconfig`) and binds, then fails — `Direct firmware load for rtlwifi/rtl8192eu_nic.bin failed with error -2`, `Fatal - failed to load firmware`, probe `-11`, no `wlan0`. The image ships only `wireless-regdb`, no `linux-firmware`. Even with the blob, `rtl8xxxu` AP mode is not reliable enough for the setup AP. |
+| 2026-11-23 | TP-Link TL-WN823N v2/v3, `2357:0109`, RTL8192EU rev B | BBB (host port) | **Client only, never an AP.** Without firmware: `rtl8xxxu` binds and dies (`Direct firmware load for rtlwifi/rtl8192eu_nic.bin failed with error -2`, `Fatal - failed to load firmware`, probe `-11`, no `wlan0`) because the images shipped only `wireless-regdb`. With the blob dropped into `/lib/firmware/rtlwifi/` by hand, the probe succeeds — `RTL8192EU rev B (SMIC) 2T2R`, `wlan0` + `phy1` — but `iw phy phy1 info` lists **`managed` and `monitor` only**: Linux 6.1's `rtl8xxxu` sets `interface_modes = BIT(NL80211_IFTYPE_STATION)` (`rtl8xxxu_core.c`), so hostapd cannot start the setup AP and this dongle cannot replace an RT5370. Fine as a client on a board that has a cable. |
 
-Firmware is the catch, not only the chipset: `mt76x2u` needs `mt7662.bin`
-and `mt7662_rom_patch.bin`, which the images do not ship either (wat-est),
-so an MT7612U fails the same way. Only the RT5370 family
-(`rt2800usb`, no firmware file) works with the current images; anything
-else needs `linux-firmware` added (and its driver enabled in
-`../os/board/common/linux.fragment`).
+Firmware is the catch, not only the chipset. `mt76x2u` needs
+`mt7662.bin`/`mt7662_rom_patch.bin`, which the 6.1 kernel looks for at the
+top of `/lib/firmware` while `linux-firmware` installs them under
+`mediatek/` — the images now ship both drivers' blobs and a link, because
+the MT7612U is the only AP-capable dongle the driver set supports and it was
+failing on the missing file too (wat-est). `REALTEK rtl8xxxu` is
+client-only, above; the RT5370 family (`rt2800usb`) needs no firmware at all.
 
 ## 2. Run in managed mode
 

@@ -145,6 +145,14 @@ whole card. Restore the two files from your backup instead; without
   from some networks, and the toolchain is musl.
   (`make -C os menuconfig-<board>` to explore, then `savedefconfig`).
 - Kernel drivers: `board/common/linux.fragment`.
+- WiFi firmware: `BR2_PACKAGE_LINUX_FIRMWARE` in the defconfigs, trimmed to
+  the two drivers the fragment enables (`MEDIATEK_MT76X2E` for
+  `mt7662*.bin`, `RTL_81XX` for `rtlwifi/rtl8192eu_nic.bin`). A driver
+  without its blob probes and fails (`Fatal - failed to load firmware`, no
+  `wlan0`), so `make -C os check` refuses a defconfig that enables one of
+  those drivers without the matching firmware package. `post-build.sh`
+  links `mediatek/mt7662*.bin` at the top of `/lib/firmware`, where the
+  6.1 kernel asks for it.
 - Busybox applets: `board/common/busybox.fragment`.
 - Partition layout: `board/<board>/genimage.cfg`.
 - Anything in the root filesystem: drop the file under
