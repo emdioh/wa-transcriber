@@ -370,6 +370,11 @@ func run() error {
 			every:   updateInterval,
 			restart: func() { logAutoRestart(log, *bootstrap) },
 		}
+		// A typed nil in the interface would not be nil: only hand the image
+		// half over when there is one.
+		if imgSvc != nil {
+			check.img = imgSvc
+		}
 	}
 	startUpdateRuntime(ctx, log, *updateDir, check)
 

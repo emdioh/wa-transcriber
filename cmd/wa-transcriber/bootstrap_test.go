@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/emdioh/wa-transcriber/internal/update"
+
+	"github.com/emdioh/wa-transcriber/internal/web"
 )
 
 // testKey is a decoded public key for the decisions that want one.
@@ -492,4 +494,106 @@ func TestStartUpdateRuntimeMarksHealthy(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("the running version was never marked healthy")
+}
+
+// fakeImageUpdater stands in for the image service: it reports one status and
+// records the Install calls.
+type fakeImageUpdater struct {
+	mu        sync.Mutex
+	st        web.ImageStatus
+	checkErr  error
+	installed int
+	restarted int
+}
+
+func (f *fakeImageUpdater) Check(context.Context) (web.ImageStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.st, f.checkErr
+}
+
+func (f *fakeImageUpdater) Install(context.Context) (web.ImageStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.installed++
+	f.st.Switched = true
+	return f.st, nil
+}
+
+func (f *fakeImageUpdater) calls() (installed, restarted int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.installed, f.restarted
+}
+
+// TestDailyCheckPrefersTheImage: a release image carries its own binary, so
+// with update_auto on the timer installs the image and reboots, instead of
+// downloading a binary the image would replace.
+func TestDailyCheckPrefersTheImage(t *testing.T) {
+	d, rs, cfg := dailyFixture(t, "v0.1.0", nil, nil)
+	img := &fakeImageUpdater{st: web.ImageStatus{
+		Enabled: true, Current: "v0.1.0", Available: "v0.5.0", Installable: true,
+	}}
+	d.img = img
+	restarts := 0
+	d.restart = func() { restarts++ }
+	cfg.set("daily", true)
+
+	d.tick(context.Background())
+
+	if installed, _ := img.calls(); installed != 1 {
+		t.Fatalf("image installs = %d, want 1", installed)
+	}
+	if restarts != 1 {
+		t.Fatalf("restarts = %d, want 1", restarts)
+	}
+	if rs.assetGets.Load() != 0 {
+		t.Fatalf("the binary was downloaded %d times although the image carried it", rs.assetGets.Load())
+	}
+}
+
+// TestDailyCheckFallsBackToTheBinary: an image this card cannot take (old
+// layout) must not stop the binary path.
+func TestDailyCheckFallsBackToTheBinary(t *testing.T) {
+	d, rs, cfg := dailyFixture(t, "v0.1.0", nil, nil)
+	img := &fakeImageUpdater{st: web.ImageStatus{
+		Enabled: true, Current: "v0.1.0", Available: "v0.5.0", Installable: true,
+		LayoutError: "this card has one root partition",
+	}}
+	d.img = img
+	restarts := 0
+	d.restart = func() { restarts++ }
+	cfg.set("daily", true)
+
+	d.tick(context.Background())
+
+	if installed, _ := img.calls(); installed != 0 {
+		t.Fatalf("image installs = %d, want 0 when the card needs a reflash", installed)
+	}
+	if rs.assetGets.Load() != 1 {
+		t.Fatalf("binary downloads = %d, want 1", rs.assetGets.Load())
+	}
+	if restarts != 1 {
+		t.Fatalf("restarts = %d, want 1 after the binary install", restarts)
+	}
+}
+
+// TestDailyCheckReportsTheImageWithoutAuto: with update_auto off nothing is
+// installed, but the availability is logged (the operator sees it in the log).
+func TestDailyCheckReportsTheImageWithoutAuto(t *testing.T) {
+	d, rs, _ := dailyFixture(t, "v0.1.0", nil, nil)
+	img := &fakeImageUpdater{st: web.ImageStatus{
+		Enabled: true, Current: "v0.1.0", Available: "v0.5.0", Installable: true,
+	}}
+	d.img = img
+	d.restart = func() { t.Error("restarted with update_auto off") }
+
+	d.tick(context.Background())
+
+	if installed, _ := img.calls(); installed != 0 {
+		t.Fatalf("image installs = %d, want 0", installed)
+	}
+	if rs.assetGets.Load() != 0 {
+		t.Fatalf("binary downloads = %d, want 0", rs.assetGets.Load())
+	}
 }

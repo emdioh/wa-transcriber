@@ -374,7 +374,12 @@ binaries and `.part` leftovers are pruned at boot.
 Checks: manual (System page button, 1 h cache in memory and on disk) plus an
 opt-in daily check (`update_check`), never in setup/AP mode; `update_auto`
 installs and restarts without asking, still behind the health gate and only
-when nothing is queued or transcribing.
+when nothing is queued or transcribing. With both halves present the timer
+looks at the **image first**: a release image carries its own binary, so
+installing it is one download and one reboot instead of a binary update that
+the image would replace a minute later. An image the card cannot take (old
+layout, or a manifest needing a newer one) is reported once and the binary
+path runs instead.
 
 **The OS image is a separate mechanism (M10, D18)**: two root slots, the
 boot partition chooses, `/data` is untouched, and a boot counter falls back

@@ -220,8 +220,18 @@ type updateSettingsSource interface {
 }
 
 // dailyCheck is the opt-in daily release check (update_check daily).
+// imageUpdater is the part of the image service the daily check needs. The
+// concrete *imageService satisfies it; a test passes its own.
+type imageUpdater interface {
+	Check(ctx context.Context) (web.ImageStatus, error)
+	Install(ctx context.Context) (web.ImageStatus, error)
+}
+
 type dailyCheck struct {
-	svc   *updateService
+	svc *updateService
+	// img is nil when the device has no image service (an old layout, or
+	// image updates switched off): the timer then only looks at binaries.
+	img   imageUpdater
 	log   *slog.Logger
 	cfg   updateSettingsSource
 	busy  func() bool
@@ -256,6 +266,36 @@ func (d *dailyCheck) run(ctx context.Context) {
 
 // tick runs one check and, when allowed, the automatic install.
 func (d *dailyCheck) tick(ctx context.Context) {
+	// The image first. A release image carries its own binary, so installing
+	// it also installs the code: one download and one reboot instead of a
+	// binary update the image would overwrite a minute later.
+	if d.img != nil {
+		ist, ierr := d.img.Check(ctx)
+		switch {
+		case ierr != nil:
+			// The image half reads the same manifest, so this is the same
+			// network problem the binary check reports below.
+			d.log.Debug("update: image check failed", "err", ierr)
+		case ist.Installable && ist.LayoutError == "":
+			if d.restart == nil || !d.mayInstall() {
+				d.log.Info("update: image "+ist.Available+" is available", "current", ist.Current)
+				break
+			}
+			staged, err := d.img.Install(ctx)
+			if err != nil {
+				d.log.Warn("update: automatic image install failed", "version", ist.Available, "err", err)
+				break
+			}
+			d.log.Warn("update: image installed, restarting into the other slot",
+				"version", staged.Available, "from", ist.Current)
+			d.restart()
+			return
+		case ist.Available != "":
+			// Newer image, but this card cannot install it: say why once.
+			d.log.Info("update: image "+ist.Available+" needs a newer layout, reflash once",
+				"reason", ist.LayoutError)
+		}
+	}
 	st, err := d.svc.Check(ctx)
 	if err != nil {
 		d.log.Warn("update: daily check failed", "err", err)
