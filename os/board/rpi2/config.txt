@@ -1,9 +1,15 @@
-# Raspberry Pi boot configuration (boot partition).
-arm_control=0x200
+# Raspberry Pi boot configuration (boot partition, p1 of the card).
+#
+# No arm_control here: 0x200 is the legacy switch for booting an AArch64
+# kernel, deprecated, and with a 32-bit kernel it is a way to get a rainbow
+# screen and nothing else. arm_64bit=0 is the supported way to say "32-bit".
 kernel=zImage
 arm_64bit=0
 gpu_mem=16
 disable_overscan=1
 dtparam=audio=off
-# Keep the serial console off: ttyAMA0 is not needed and costs boot time.
-enable_uart=0
+# ttyAMA0 must exist: cmdline.txt passes console=ttyAMA0, and S02console starts
+# the debug getty on it when wat.txt says console=serial/both/all (the images
+# ship console=all). Disabling it silently removes the only headless console on
+# this board.
+enable_uart=1

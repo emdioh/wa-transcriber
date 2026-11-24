@@ -85,7 +85,7 @@ Measured with Buildroot 2024.02.9 on 12 cores:
 
 | Board | `sdcard.img` | gzipped | boot partition |
 |---|---|---|---|
-| Raspberry Pi 2 | 192 MB | 38.6 MB | bootcode.bin, start.elf, fixup.dat, zImage, bcm2709-rpi-2-b.dtb, cmdline.txt, config.txt, wat.txt |
+| Raspberry Pi 2 | 192 MB | 38.6 MB | bootcode.bin, start.elf, fixup.dat, zImage, the bcm2709/bcm2710 dtbs, cmdline.txt, config.txt, wat.txt |
 | BeagleBone Black | 192 MB | 50.2 MB | MLO, u-boot.img, zImage, am335x-boneblack.dtb, extlinux/, wat.txt |
 
 The image is 192 MB regardless of the card size: it is one 32 MB boot

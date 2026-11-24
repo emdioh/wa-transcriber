@@ -32,7 +32,11 @@ BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="$(call github,raspberrypi,linux,17f135
 BR2_LINUX_KERNEL_DEFCONFIG="bcm2709"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_WAT_PATH)/board/common/linux.fragment"
 BR2_LINUX_KERNEL_DTS_SUPPORT=y
-BR2_LINUX_KERNEL_INTREE_DTS_NAME="bcm2709-rpi-2-b"
+# Every ARMv7 board the firmware can detect: the Pi 2 v1.1 is BCM2836
+# (bcm2709), the Pi 2 v1.2 and the Pi 3/3+ are BCM2710. The firmware picks
+# the dtb by reading the model, so a board whose dtb is missing boots into
+# nothing at all - no HDMI, no serial.
+BR2_LINUX_KERNEL_INTREE_DTS_NAME="bcm2709-rpi-2-b bcm2710-rpi-2-b bcm2710-rpi-3-b bcm2710-rpi-3-b-plus bcm2710-rpi-cm3 bcm2710-rpi-zero-2 bcm2710-rpi-zero-2-w"
 BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 
 # Boot firmware
