@@ -104,6 +104,9 @@ What the Makefile does, in order:
 
 `make -C os distclean` removes everything it downloaded or built.
 
+Publishing the images so devices can update themselves over the network is a
+separate, ordered procedure: [../docs/image-release.md](../docs/image-release.md).
+
 ## Writing the card and first boot
 
 ```bash
