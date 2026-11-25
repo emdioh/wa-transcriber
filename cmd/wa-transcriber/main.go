@@ -103,7 +103,7 @@ func run() error {
 
 	// Init mode: PID 1 alone is not enough (a container has that too), the
 	// kernel command line has to name this binary as init.
-	asInit = *initFlag || (boot.IsInit() && kernelInitIsUs(readKernelCmdline()))
+	asInit = *initFlag || boot.InitRequested()
 	if asInit {
 		setInitEnv(os.LookupEnv, os.Setenv)
 		applied, err := applyInitDefaults(flag.CommandLine, readKernelCmdline(), os.LookupEnv)

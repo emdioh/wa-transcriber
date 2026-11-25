@@ -132,6 +132,25 @@ func (m *fakeMachine) ran(prefix string) bool {
 	return false
 }
 
+func TestCmdlineNamesUs(t *testing.T) {
+	tests := []struct {
+		cmdline string
+		want    bool
+	}{
+		{"root=/dev/mmcblk0p1 ro init=/usr/bin/wa-transcriber", true},
+		{"console=ttyS0 init=/init/wa-transcriber-v2 ro", true},
+		{"root=/dev/mmcblk0p1 ro init=/sbin/init", false},
+		{"root=/dev/mmcblk0p1 ro", false},
+		// A container: the host's command line, no init= of ours.
+		{"BOOT_IMAGE=/vmlinuz root=/dev/vda1 ro quiet", false},
+	}
+	for _, tc := range tests {
+		if got := CmdlineNamesUs(tc.cmdline); got != tc.want {
+			t.Errorf("CmdlineNamesUs(%q) = %v, want %v", tc.cmdline, got, tc.want)
+		}
+	}
+}
+
 func TestMountTable(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "mountinfo")
 	writeFile(t, p, []byte(

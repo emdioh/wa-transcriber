@@ -48,19 +48,6 @@ func setInitEnv(lookupEnv func(string) (string, bool), setenv func(string, strin
 // that loads matters.
 var watchdogModules = []string{"bcm2835_wdt", "omap_wdt"}
 
-// kernelInitIsUs reports whether the kernel command line names this binary as
-// init. That, and not PID 1 alone, is what tells a board from a container:
-// in a container the program is PID 1 too, but the mounts belong to the
-// engine and the settings belong to the image's command line.
-func kernelInitIsUs(cmdline string) bool {
-	for _, arg := range strings.Fields(cmdline) {
-		if v, ok := strings.CutPrefix(arg, "init="); ok && strings.Contains(v, "wa-transcriber") {
-			return true
-		}
-	}
-	return false
-}
-
 // readKernelCmdline returns the kernel command line ("" when unreadable).
 func readKernelCmdline() string {
 	b, err := os.ReadFile("/proc/cmdline")

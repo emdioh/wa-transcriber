@@ -29,26 +29,6 @@ func TestSetInitEnv(t *testing.T) {
 	}
 }
 
-func TestKernelInitIsUs(t *testing.T) {
-	tests := []struct {
-		cmdline string
-		want    bool
-	}{
-		{"root=/dev/mmcblk0p1 ro init=/usr/bin/wa-transcriber", true},
-		{"console=ttyS0 init=/init/wa-transcriber-v2 ro", true},
-		{"root=/dev/mmcblk0p1 ro init=/sbin/init", false},
-		{"root=/dev/mmcblk0p1 ro", false},
-		{"BOOT_IMAGE=/boot/vmlinuz init=/lib/systemd/systemd", false},
-		// A container: the host's command line, no init= of ours.
-		{"BOOT_IMAGE=/vmlinuz root=/dev/vda1 ro quiet", false},
-	}
-	for _, tc := range tests {
-		if got := kernelInitIsUs(tc.cmdline); got != tc.want {
-			t.Errorf("kernelInitIsUs(%q) = %v, want %v", tc.cmdline, got, tc.want)
-		}
-	}
-}
-
 func TestWatArgs(t *testing.T) {
 	got := watArgs("root=/dev/mmcblk0p2 ro wat.network=none wat.listen=:8080 wat.broken wat.=x")
 	if len(got) != 2 || got["network"] != "none" || got["listen"] != ":8080" {

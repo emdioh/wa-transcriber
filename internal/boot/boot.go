@@ -82,9 +82,47 @@ type Options struct {
 	Run func(ctx context.Context, stdin, name string, args ...string) error
 }
 
-// IsInit reports whether the kernel started this process as the machine's
-// init.
+// IsInit reports whether this process is PID 1, which is necessary but not
+// sufficient to be the machine's init: a container's main process is PID 1 as
+// well. Use InitRequested for the decision.
 func IsInit() bool { return os.Getpid() == 1 }
+
+// CmdlineNamesUs reports whether a kernel command line names this binary as
+// init.
+func CmdlineNamesUs(cmdline string) bool {
+	for _, arg := range strings.Fields(cmdline) {
+		if v, ok := strings.CutPrefix(arg, "init="); ok && strings.Contains(v, "wa-transcriber") {
+			return true
+		}
+	}
+	return false
+}
+
+// InitRequested reports whether the kernel started this binary as the
+// machine's init, and it is the first thing the program asks.
+//
+// It cannot assume that /proc is mounted: mounting /proc is one of the things
+// init exists to do, and on a board that boots with init= nothing else has run.
+// Without this mount, /proc/cmdline does not exist, the answer is "no", and the
+// program goes on to fail on the read-only root with "Attempted to kill init"
+// after trying to write to a /data nobody mounted (a board run, and the reason
+// this function exists). PID 1 alone is not the answer either: a container's
+// main process is PID 1 too, and its /proc/cmdline is the host's.
+func InitRequested() bool {
+	if !IsInit() {
+		return false
+	}
+	if _, err := os.Stat("/proc/cmdline"); err != nil {
+		if err := mount("proc", "/proc", "proc", 0, ""); err != nil {
+			return false
+		}
+	}
+	b, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		return false
+	}
+	return CmdlineNamesUs(string(b))
+}
 
 func (o Options) withDefaults() Options {
 	if o.Log == nil {
