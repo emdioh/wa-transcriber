@@ -192,6 +192,35 @@ func TestSetupMountsPseudoFilesystemsOnce(t *testing.T) {
 	}
 }
 
+// TestEnsureMountResolvesSymlinks: /var/log is a symlink to ../tmp on the
+// image, so a naive mount does not land where it says and the "already
+// mounted" check never matches it (three stacked tmpfs mounts on a board).
+func TestEnsureMountResolvesSymlinks(t *testing.T) {
+	m := newFakeMachine(t)
+	o := m.options()
+	root := t.TempDir()
+	for _, d := range []string{"tmp", "var"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Exactly the image's shape: /var/log -> ../tmp.
+	if err := os.Symlink("../tmp", filepath.Join(root, "var", "log")); err != nil {
+		t.Fatal(err)
+	}
+	// The resolved target is already mounted.
+	writeFile(t, m.mounts, append(mustRead(t, m.mounts),
+		[]byte("91 1 0:99 / "+filepath.Join(root, "tmp")+" rw - tmpfs tmpfs rw\n")...))
+
+	err := o.ensureMount(mountSpec{source: "tmpfs", target: filepath.Join(root, "var", "log"), fstype: "tmpfs", data: "size=8M"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.calls) != 0 {
+		t.Fatalf("mounts = %+v; a mount point that resolves to an already mounted path was mounted again", m.calls)
+	}
+}
+
 func TestMountDataKeepsLabeledData(t *testing.T) {
 	m := newFakeMachine(t)
 	writeFile(t, filepath.Join(m.devDir, "mmcblk0p4"), ext4Image(DataLabel))

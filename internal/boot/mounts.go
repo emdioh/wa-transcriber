@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -58,25 +59,40 @@ func (o Options) mounted(target string) bool {
 	return tbl[target]
 }
 
+// resolveMountPoint follows symlinks in a mount point.
+//
+// It matters on this image: Buildroot's skeleton makes /var/log a symlink to
+// ../tmp, so mounting "/var/log" puts a tmpfs on /tmp — hidden under the one
+// already there, never listed as /var/log by the kernel, and therefore mounted
+// again on every start (a board test stacked three of them). Resolving first
+// makes the "already mounted" check and the mount agree on what the target is.
+func resolveMountPoint(target string) string {
+	if resolved, err := filepath.EvalSymlinks(target); err == nil {
+		return resolved
+	}
+	return target
+}
+
 // ensureMount mounts m unless its target is already mounted.
 //
 // Idempotency is what makes a re-exec (an update, a reset) safe: the second
 // run of Setup finds every filesystem where the first one left it.
 func (o Options) ensureMount(m mountSpec) error {
-	if o.mounted(m.target) {
+	target := resolveMountPoint(m.target)
+	if o.mounted(target) {
 		return nil
 	}
 	if err := o.MkdirAll(m.target, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
 		return fmt.Errorf("boot: %s: %w", m.target, err)
 	}
-	err := o.Mount(m.source, m.target, m.fstype, m.flags, m.data)
+	err := o.Mount(m.source, target, m.fstype, m.flags, m.data)
 	switch {
 	case err == nil:
-		o.Log.Info("mounted", "device", m.source, "target", m.target, "type", m.fstype)
+		o.Log.Info("mounted", "device", m.source, "target", target, "type", m.fstype)
 		return nil
 	case errors.Is(err, unix.EBUSY):
 		return nil
 	default:
-		return fmt.Errorf("boot: mounting %s on %s: %w", m.source, m.target, err)
+		return fmt.Errorf("boot: mounting %s on %s: %w", m.source, target, err)
 	}
 }
