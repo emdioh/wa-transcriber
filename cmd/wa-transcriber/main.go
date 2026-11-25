@@ -139,6 +139,9 @@ func run() error {
 			HostnameFile: "/etc/hostname",
 			Modules:      watchdogModules,
 		}); err != nil {
+			// Not fatal on purpose: the old init is still on the image and
+			// knows how to bring this board up (see initFallback).
+			initFallback(slog.Default(), err)
 			return fmt.Errorf("init: %w", err)
 		}
 	}

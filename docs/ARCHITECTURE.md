@@ -569,6 +569,12 @@ the command line has to name the binary as init.
 
 Two things follow from being PID 1:
 
+- **A failed setup is not a reboot loop.** If `boot.Setup` cannot bring the
+  machine up, the program logs the reason to `/dev/kmsg` and `exec`s
+  `/sbin/init`: busybox init reads `/etc/inittab`, runs `rcS` and the device
+  comes up the old way, with a console. Everything `Setup` does is idempotent,
+  so the old scripts find their filesystems where it left them. A board with
+  no console access and no card reader is a board nobody experiments on.
 - **Exit is a kernel panic.** `boot.Crash` writes the reason to `/dev/kmsg`,
   which the kernel prints on every active console, remounts nothing, reboots,
   and — if the reboot is refused — blocks with the watchdog still unpetted, so

@@ -49,7 +49,14 @@ Verified here, without a board:
   not take away the only way onto a board without a keyboard.
 
 Not verified: **the real boot on the board** (mounts, `sfdisk` on the card,
-the reaped orphans of the WiFi daemons). That needs the owner: flash a card
+the reaped orphans of the WiFi daemons). Two attempts were made on the
+owner's SD card on 2026-11-25 and both found bugs before the boot path could
+be judged: the first died because the "am I init" check read `/proc/cmdline`
+before `/proc` was mounted (fixed: `InitRequested` mounts `/proc` itself),
+the second was cut short by that card failing at the mmc layer (`error -110`,
+`Journal has aborted` on `/data`). The mode now falls back to `/sbin/init`
+when `Setup` fails, so a bad attempt boots the old path with a console
+instead of needing a card reader. That needs the owner: flash a card
 built from this tree, watch the serial console, and check `mount`, `cat
 /proc/1/cmdline`, the web UI and a pairing. Rollback is deleting `init=` from
 `extlinux.conf` on the boot partition.

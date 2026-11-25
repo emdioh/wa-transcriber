@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
 	"flag"
+	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -26,6 +29,23 @@ func TestSetInitEnv(t *testing.T) {
 		func(k, v string) error { env[k] = v; return nil })
 	if env["PATH"] != "/usr/local/bin" {
 		t.Fatalf("PATH = %q, want the caller's", env["PATH"])
+	}
+}
+
+// TestInitFallback: when init mode cannot come up, the machine goes back to
+// busybox init instead of a reboot loop.
+func TestInitFallbackExecsTheOldInit(t *testing.T) {
+	old := execFunc
+	defer func() { execFunc = old }()
+	var gotPath string
+	var gotArgs []string
+	execFunc = func(path string, argv []string, env []string) error {
+		gotPath, gotArgs = path, argv
+		return nil
+	}
+	initFallback(slog.New(slog.NewTextHandler(io.Discard, nil)), errors.New("boom"))
+	if gotPath != "/sbin/init" || len(gotArgs) != 1 || gotArgs[0] != "/sbin/init" {
+		t.Fatalf("fallback exec = %q %v, want /sbin/init", gotPath, gotArgs)
 	}
 }
 
