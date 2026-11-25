@@ -40,13 +40,15 @@ grep -q 'config BR2_PACKAGE_WA_TRANSCRIBER' "$PKG/Config.in" ||
 	fail "Config.in does not define BR2_PACKAGE_WA_TRANSCRIBER"
 grep -q 'generic-package' "$PKG/wa-transcriber.mk" ||
 	fail "the package must be a generic-package (it only copies a prebuilt binary)"
-grep -q 'wa-transcriber-linux-armv7' "$PKG/wa-transcriber.mk" ||
-	fail "the package does not install the armv7 binary"
+grep -q 'wa-transcriber-linux-$(WA_TRANSCRIBER_ARCH)' "$PKG/wa-transcriber.mk" ||
+	fail "the package names a fixed architecture instead of \$(WA_TRANSCRIBER_ARCH)"
+grep -q 'default "armv7"' "$PKG/Config.in" ||
+	fail "BR2_PACKAGE_WA_TRANSCRIBER_ARCH does not default to armv7"
 ok "package recipe"
 
 # --- defconfigs ------------------------------------------------------------
 
-for board in rpi2 bbb; do
+for board in rpi1 rpi2 bbb; do
 	defconfig="$HERE/configs/wat_${board}_defconfig"
 	[ -f "$defconfig" ] || { fail "missing $defconfig"; continue; }
 
@@ -63,6 +65,17 @@ for board in rpi2 bbb; do
 	# S01data adds the DATA partition to the running kernel with partx.
 	grep -q '^BR2_PACKAGE_UTIL_LINUX_PARTX=y$' "$defconfig" ||
 		fail "$board: partx is missing (needed to add the DATA partition)"
+
+	# The binary has to match the CPU: an armv7 Go binary on an ARMv6 board
+	# (Raspberry Pi 1/Zero) loads and dies with no output, and vice versa.
+	want_arch=armv7
+	[ "$board" = rpi1 ] && want_arch=armv6
+	if grep -q '^BR2_PACKAGE_WA_TRANSCRIBER_ARCH=' "$defconfig"; then
+		grep -q "^BR2_PACKAGE_WA_TRANSCRIBER_ARCH=\"$want_arch\"\$" "$defconfig" ||
+			fail "$board: BR2_PACKAGE_WA_TRANSCRIBER_ARCH must be \"$want_arch\""
+	elif [ "$want_arch" != armv7 ]; then
+		fail "$board: needs BR2_PACKAGE_WA_TRANSCRIBER_ARCH=\"$want_arch\" (default is armv7)"
+	fi
 
 	# The WiFi drivers in the kernel fragment need their blobs in the rootfs.
 	# A missing one is not a build error, it is a dead dongle on the board.
@@ -93,7 +106,7 @@ done
 
 # --- board files -----------------------------------------------------------
 
-for board in rpi2 bbb; do
+for board in rpi1 rpi2 bbb; do
 	for f in genimage.cfg post-build.sh; do
 		[ -f "$HERE/board/$board/$f" ] || fail "missing board/$board/$f"
 	done
@@ -147,7 +160,7 @@ grep -q 'wa-transcriber -data /data .*-bootstrap /usr/bin/wa-transcriber' "$OVL/
 # board has to describe its own boot file and slots or nothing can switch.
 grep -q 'wa-transcriber -data /data .*-image-update /data' "$OVL/etc/inittab" ||
 	fail "inittab does not pass -image-update /data (image updates are off)"
-for board in bbb:beagle:/boot/extlinux/extlinux.conf rpi2:rpi2:/boot/cmdline.txt; do
+for board in bbb:beagle:/boot/extlinux/extlinux.conf rpi1:rpi1:/boot/cmdline.txt rpi2:rpi2:/boot/cmdline.txt; do
 	dir=${board%%:*}; rest=${board#*:}; name=${rest%%:*}; boot=${rest#*:}
 	grep -q '"boot_file": "'"$boot"'"' "$HERE/board/$dir/post-build.sh" ||
 		fail "board/$dir/post-build.sh does not write etc/wat/image.json with boot_file $boot"
@@ -173,7 +186,7 @@ grep -q '/var/lib\ttmpfs\|/var/lib.*tmpfs' "$OVL/etc/fstab" ||
 	fail "fstab must mount a tmpfs on /var/lib (seedrng writes there)"
 # Buildroot treats the local package source as immutable, so the board
 # targets must dirclean it or the image keeps the first binary it ever had.
-for board in rpi2 bbb; do
+for board in rpi1 rpi2 bbb; do
 	grep -q "wa-transcriber-dirclean" "$HERE/Makefile" ||
 		fail "os/Makefile must dirclean the transcriber package before building"
 done

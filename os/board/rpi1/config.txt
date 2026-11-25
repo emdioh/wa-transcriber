@@ -1,0 +1,10 @@
+# Raspberry Pi 1 / Zero boot configuration (boot partition, p1 of the card).
+# BCM2835, ARM1176: no arm_64bit, no arm_control.
+kernel=zImage
+gpu_mem=16
+disable_overscan=1
+dtparam=audio=off
+# ttyAMA0 must exist: cmdline.txt passes console=ttyAMA0, and S02console starts
+# the debug getty on it when wat.txt says console=serial/both/all (the images
+# ship console=all).
+enable_uart=1

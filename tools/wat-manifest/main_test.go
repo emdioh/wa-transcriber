@@ -19,11 +19,13 @@ type want struct {
 func writeFakeAssets(t *testing.T, dist string) map[string]want {
 	t.Helper()
 	contents := map[string][]byte{
+		"linux-armv6": []byte("armv6"),
 		"linux-armv7": []byte("armv7-binary"),
 		"linux-arm64": []byte("arm64-binary-longer"),
 		"linux-amd64": []byte("amd64"),
 	}
 	files := map[string]string{
+		"linux-armv6": "wa-transcriber-linux-armv6",
 		"linux-armv7": "wa-transcriber-linux-armv7",
 		"linux-arm64": "wa-transcriber-linux-arm64",
 		"linux-amd64": "wa-transcriber-linux-amd64",

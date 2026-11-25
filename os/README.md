@@ -1,6 +1,7 @@
 # Images (Buildroot)
 
-Flashable SD-card images for the **Raspberry Pi 2** and the **BeagleBone
+Flashable SD-card images for the **Raspberry Pi 1/Zero**, the **Raspberry
+Pi 2/3**, and the **BeagleBone
 Black**, built with Buildroot from a `BR2_EXTERNAL` tree in this directory.
 
 Milestone M6 in [../docs/PLAN.md](../docs/PLAN.md); the hardware validation
@@ -40,7 +41,7 @@ nothing else listens there. A shell is opt-in through `wat.txt`:
 |---|---|
 | `all` (what these images ship) | serial + USB + HDMI |
 | `off` | nothing |
-| `serial` | the UART header: `/dev/ttyS0` on the BeagleBone (J1, 115200 8N1, 3.3 V USB-TTL adapter), `/dev/ttyAMA0` on the Raspberry Pi 2 |
+| `serial` | the UART header: `/dev/ttyS0` on the BeagleBone (J1, 115200 8N1, 3.3 V USB-TTL adapter), `/dev/ttyAMA0` on the Raspberry Pi 1/2 |
 | `usb` | the USB client port as a CDC-ACM gadget, `/dev/ttyGS0`; on a Linux host it appears as `/dev/ttyACM0` |
 | `hdmi` | `tty1`, i.e. the HDMI output driven by a USB keyboard on the host port |
 | `both` | `serial` + `usb` |
@@ -53,7 +54,7 @@ validated. **The root account has no password**, so anyone who can reach one
 of those ports has a root shell: set `console=off` before the device is used
 by anyone else. The USB
 path needs the port in peripheral mode (`ls /sys/class/udc`); the BeagleBone
-has `CONFIG_USB_CONFIGFS_ACM=y` built in, the Raspberry Pi 2 has no device
+has `CONFIG_USB_CONFIGFS_ACM=y` built in, the Raspberry Pies have no device
 controller and logs `no USB device controller`.
 
 Kernel messages never need `console=`: the BeagleBone boots with
@@ -73,7 +74,8 @@ the Buildroot source cache, and the usual host tools (`make`, `gcc`, `bison`,
 
 ```bash
 make -C os check     # structural checks, no network, seconds
-make -C os rpi2      # -> os/_output/rpi2/images/sdcard.img
+make -C os rpi1      # -> os/_output/rpi1/images/sdcard.img   (Pi 1/Zero, ARMv6)
+make -C os rpi2      # -> os/_output/rpi2/images/sdcard.img   (Pi 2/3/Zero 2, ARMv7)
 make -C os bbb       # -> os/_output/bbb/images/sdcard.img
 ```
 
@@ -85,7 +87,8 @@ Measured with Buildroot 2024.02.9 on 12 cores:
 
 | Board | `sdcard.img` | gzipped | boot partition |
 |---|---|---|---|
-| Raspberry Pi 2 | 192 MB | 38.6 MB | bootcode.bin, start.elf, fixup.dat, zImage, the bcm2709/bcm2710 dtbs, cmdline.txt, config.txt, wat.txt |
+| Raspberry Pi 1/Zero | 192 MB | ~38 MB | bootcode.bin, start.elf, fixup.dat, zImage, the bcm2708 dtbs, cmdline.txt, config.txt, wat.txt |
+| Raspberry Pi 2/3 | 192 MB | 38.6 MB | bootcode.bin, start.elf, fixup.dat, zImage, the bcm2709/bcm2710 dtbs, cmdline.txt, config.txt, wat.txt |
 | BeagleBone Black | 192 MB | 50.2 MB | MLO, u-boot.img, zImage, am335x-boneblack.dtb, extlinux/, wat.txt |
 
 The image is 192 MB regardless of the card size: it is one 32 MB boot

@@ -36,7 +36,8 @@ Board state to know about:
 - `/tmp/wat-new` and `/tmp/flash.log` on the board are my test artifacts
   (tmpfs, gone at the next reboot);
 - the images under `os/_output/` are from commit `481ff94`-era sources; the
-  Go changes after that are **not** in them (`make -C os bbb` rebuilds, and
+  Go changes after that are **not** in them (`make -C os bbb` rebuilds — `rpi1` and `rpi2` are the Raspberry Pi
+  targets, armv6 and armv7 respectively — and
   `dist/` must be rebuilt first because the binary only rebuilds when its Go
   sources change).
 

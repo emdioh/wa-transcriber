@@ -2,7 +2,7 @@ config BR2_PACKAGE_WA_TRANSCRIBER
 	bool "wa-transcriber"
 	help
 	  The wa-transcriber binary, copied from the Go cross-build
-	  (dist/wa-transcriber-linux-armv7 in the repository, refreshed by
+	  (dist/wa-transcriber-linux-<arch> in the repository, refreshed by
 	  "make -C os prebuilt").
 
 	  This package does not build Go inside Buildroot on purpose: the
@@ -10,3 +10,16 @@ config BR2_PACKAGE_WA_TRANSCRIBER
 	  behind the one the project needs.
 
 	  https://github.com/emdioh/wa-transcriber
+
+if BR2_PACKAGE_WA_TRANSCRIBER
+
+config BR2_PACKAGE_WA_TRANSCRIBER_ARCH
+	string "binary architecture"
+	default "armv7"
+	help
+	  Which cross-built binary to install: armv7 (Pi 2/3/Zero 2, the
+	  BeagleBone Black, the Cubieboard), armv6 (Raspberry Pi 1/Zero, one
+	  ARM1176 without NEON) or arm64. The board's CPU decides: a wrong
+	  choice produces an image that loads and then dies with no output.
+
+endif

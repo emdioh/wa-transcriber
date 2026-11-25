@@ -6,7 +6,10 @@ below must be executed on the device before M6 starts; record numbers and
 observations here.
 
 Boards: **Raspberry Pi 2** (Raspberry Pi OS Lite) and **Cubieboard**
-(Allwinner A10, ARMv7, 1 GB, Debian/Armbian). The **BeagleBone Black** is
+(Allwinner A10, ARMv7, 1 GB, Debian/Armbian). The owner also has a
+**Raspberry Pi 1** (BCM2835, ARMv6): it cannot run the Pi 2 image, so `make -C
+os rpi1` builds its own (`wat-gjc`); the same scenarios apply, with the caveat
+that it is a single-core ARMv6 board. The **BeagleBone Black** is
 validated later, in M6.
 
 ## 1. WiFi adapter gate

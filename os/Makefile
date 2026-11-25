@@ -20,26 +20,29 @@ BUILDROOT_DIR     := $(BUILDROOT_ROOT)/buildroot-$(BUILDROOT_VERSION)
 BUILDROOT_TARBALL := $(BUILDROOT_ROOT)/buildroot-$(BUILDROOT_VERSION).tar.gz
 BUILDROOT_URL     ?= https://buildroot.org/downloads/buildroot-$(BUILDROOT_VERSION).tar.gz
 BR2_EXTERNAL      := $(CURDIR)
-GO_DIST           := $(CURDIR)/../dist/wa-transcriber-linux-armv7
+GO_DIST_armv7     := $(CURDIR)/../dist/wa-transcriber-linux-armv7
+GO_DIST_armv6     := $(CURDIR)/../dist/wa-transcriber-linux-armv6
 
 JOBS ?= $(shell nproc 2>/dev/null || echo 2)
 
 # One output directory per board, so both can be built from the same tree.
+OUT_rpi1 := $(CURDIR)/_output/rpi1
 OUT_rpi2 := $(CURDIR)/_output/rpi2
 OUT_bbb  := $(CURDIR)/_output/bbb
 
-.PHONY: all rpi2 bbb prebuilt buildroot check clean distclean download menuconfig-rpi2 menuconfig-bbb
+.PHONY: all rpi1 rpi2 bbb prebuilt buildroot check clean distclean download menuconfig-rpi1 menuconfig-rpi2 menuconfig-bbb
 
-all: check rpi2 bbb
+all: check rpi1 rpi2 bbb
 
 # --- the binary ------------------------------------------------------------
 
 # Refresh os/prebuilt/ from the Go cross-build. The package copies
 # os/prebuilt/wa-transcriber-linux-armv7 into /usr/bin/wa-transcriber.
-prebuilt: $(GO_DIST)
+prebuilt: $(GO_DIST_armv7) $(GO_DIST_armv6)
 	@mkdir -p prebuilt
-	cp $(GO_DIST) prebuilt/wa-transcriber-linux-armv7
-	@ls -l prebuilt/wa-transcriber-linux-armv7
+	cp $(GO_DIST_armv7) prebuilt/wa-transcriber-linux-armv7
+	cp $(GO_DIST_armv6) prebuilt/wa-transcriber-linux-armv6
+	@ls -l prebuilt/wa-transcriber-linux-arm*
 
 # Buildroot sees a "local" package source as immutable: without this the
 # image keeps whatever binary the first build copied (the board once booted
@@ -55,8 +58,11 @@ GO_SOURCES := $(shell find $(CURDIR)/.. -name '*.go' -not -path '*/_output/*' \
 	-not -path '*/dist/*' -not -path '*/data/*' 2>/dev/null) \
 	$(CURDIR)/../go.mod $(CURDIR)/../go.sum $(CURDIR)/../release/update-pubkey.txt
 
-$(GO_DIST): $(GO_SOURCES)
+$(GO_DIST_armv7): $(GO_SOURCES)
 	$(MAKE) -C .. build-arm7
+
+$(GO_DIST_armv6): $(GO_SOURCES)
+	$(MAKE) -C .. build-arm6
 
 # --- Buildroot -------------------------------------------------------------
 
@@ -71,6 +77,12 @@ $(BUILDROOT_DIR)/.stamp-extracted: $(BUILDROOT_TARBALL)
 	touch $@
 
 # --- board images ----------------------------------------------------------
+
+rpi1: check buildroot prebuilt
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi1) BR2_EXTERNAL=$(BR2_EXTERNAL) wat_rpi1_defconfig
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi1) BR2_EXTERNAL=$(BR2_EXTERNAL) wa-transcriber-dirclean
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi1) BR2_EXTERNAL=$(BR2_EXTERNAL) -j$(JOBS)
+	sh $(CURDIR)/mkimage.sh rpi1 $(OUT_rpi1)
 
 rpi2: check buildroot prebuilt
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi2) BR2_EXTERNAL=$(BR2_EXTERNAL) wat_rpi2_defconfig
@@ -88,6 +100,9 @@ bbb: check buildroot prebuilt
 # produced in $(OUT)/images, so the partition layout stays in this tree
 # instead of in a Buildroot post-image hook.
 
+menuconfig-rpi1: buildroot
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi1) BR2_EXTERNAL=$(BR2_EXTERNAL) menuconfig
+
 menuconfig-rpi2: buildroot
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi2) BR2_EXTERNAL=$(BR2_EXTERNAL) menuconfig
 
@@ -100,7 +115,7 @@ check:
 	@sh $(CURDIR)/check.sh
 
 clean:
-	rm -rf $(OUT_rpi2) $(OUT_bbb)
+	rm -rf $(OUT_rpi2) $(OUT_bbb) $(OUT_rpi1)
 
 distclean: clean
-	rm -rf $(BUILDROOT_ROOT) $(OUT_rpi2) $(OUT_bbb) prebuilt
+	rm -rf $(BUILDROOT_ROOT) $(OUT_rpi2) $(OUT_bbb) $(OUT_rpi1) prebuilt

@@ -632,6 +632,12 @@ Goal: flashable SD-card images for the Raspberry Pi 2 and the BeagleBone
 Black: boot in < 30 s to a working device, read-only root, data on its own
 partition, survives power cuts.
 
+Added 2026-11-25: a **Raspberry Pi 1/Zero** target (`make -C os rpi1`) as
+well, because the owner's board turned out to be a Pi 1: BCM2835 is ARMv6, so
+it needs its own toolchain, kernel config (`bcmrpi`), dtbs (`bcm2708`) and a
+`GOARM=6` binary (`BR2_PACKAGE_WA_TRANSCRIBER_ARCH="armv6"`). Same layout and
+boot files as the Pi 2 image.
+
 **Gate in**: M5 steps done (the code is complete and unit-tested; its
 hardware validation is M5b and does *not* block building images). The second
 board is a **BeagleBone Black** (AM3358, ARMv7, 512 MB RAM, microSD boot).

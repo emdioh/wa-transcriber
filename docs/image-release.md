@@ -92,7 +92,8 @@ Expect exactly the tag, e.g. `v0.2.0`.
 
 ## 3. Stage the images under the names the manifest expects
 
-`tools/wat-manifest` has a fixed table — `beagle.img` and `rpi2.img` — and
+`tools/wat-manifest` has a fixed table — `beagle.img`, `rpi1.img` and
+`rpi2.img` — and
 skips a file that does not exist (a missing board is simply absent from the
 manifest, not an error). Copy, never rename in place:
 
@@ -104,6 +105,7 @@ gh release download v0.2.0 --repo emdioh/wa-transcriber \
     --pattern 'wa-transcriber-linux-*' --dir /tmp/rel/dist --clobber
 
 cp os/_output/bbb/images/sdcard.img  /tmp/rel/images/beagle.img
+cp os/_output/rpi1/images/sdcard.img /tmp/rel/images/rpi1.img
 cp os/_output/rpi2/images/sdcard.img /tmp/rel/images/rpi2.img
 ```
 
@@ -134,7 +136,8 @@ Expect `released_at` plus the `images` block, nothing else.
 
 ```sh
 gh release upload v0.2.0 --repo emdioh/wa-transcriber --clobber \
-    /tmp/rel/images/beagle.img /tmp/rel/images/rpi2.img /tmp/rel/manifest.json
+    /tmp/rel/images/beagle.img /tmp/rel/images/rpi1.img /tmp/rel/images/rpi2.img \
+    /tmp/rel/manifest.json
 ```
 
 This **replaces** CI's image-less manifest. From here on the release is
@@ -232,9 +235,9 @@ EOF
 - A release that turns out wrong is retired by publishing a **higher** version;
   deleting a tag/release leaves devices with whatever they downloaded, and a
   device that already switched slots keeps running it.
-- `beagle.img` and `rpi2.img` are the *same layout* but not the same bytes; the
-  manifest keys them by board, not by architecture (both root slots hold the
-  armv7 binary).
+- The three images are the *same layout* but not the same bytes; the
+  manifest keys them by board, not by architecture. `rpi1.img` is the odd one
+  out: it carries the **armv6** binary, because a Pi 1/Zero is an ARM1176.
 
 ## Adding a board image to an existing release
 

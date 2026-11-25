@@ -39,6 +39,7 @@ type asset struct {
 }
 
 var assets = []asset{
+	{"linux-armv6", "wa-transcriber-linux-armv6"},
 	{"linux-armv7", "wa-transcriber-linux-armv7"},
 	{"linux-arm64", "wa-transcriber-linux-arm64"},
 	{"linux-amd64", "wa-transcriber-linux-amd64"},
@@ -73,6 +74,7 @@ type imageEntry struct {
 // boards, not architectures: the same armv7 binary runs on both.
 var images = []struct{ key, file string }{
 	{"beagle", "beagle.img"},
+	{"rpi1", "rpi1.img"},
 	{"rpi2", "rpi2.img"},
 }
 
