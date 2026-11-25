@@ -1,9 +1,10 @@
 package netmgr
 
 import (
-	"bytes"
 	"context"
 	"os/exec"
+
+	"github.com/emdioh/wa-transcriber/internal/proc"
 )
 
 // Runner executes external commands. It exists so tests can script command
@@ -22,16 +23,13 @@ type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	err := cmd.Run()
-	return buf.Bytes(), err
+	out, err := proc.CombinedOutput(cmd)
+	return out, err
 }
 
 func (execRunner) Start(ctx context.Context, name string, args ...string) (Stop func(), Wait func() error, err error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	if err := cmd.Start(); err != nil {
+	if err := proc.Start(cmd); err != nil {
 		return nil, nil, err
 	}
 	stop := func() {
@@ -39,6 +37,8 @@ func (execRunner) Start(ctx context.Context, name string, args ...string) (Stop 
 			_ = cmd.Process.Kill()
 		}
 	}
-	wait := cmd.Wait
+	// Through the table like every other child: as init, a pid nobody waits
+	// for is a zombie for the lifetime of the machine.
+	wait := func() error { return proc.Wait(cmd) }
 	return stop, wait, nil
 }

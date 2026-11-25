@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/emdioh/wa-transcriber/internal/proc"
 )
 
 // Refusals that are not about the target: each one is a sentence the console
@@ -471,7 +473,7 @@ func (r Request) rereadFunc() func(disk string) error {
 		return r.RereadFunc
 	}
 	return func(disk string) error {
-		out, err := exec.Command("partx", "-u", disk).CombinedOutput()
+		out, err := proc.CombinedOutput(exec.Command("partx", "-u", disk))
 		if err != nil {
 			return fmt.Errorf("partx -u %s: %w: %s", disk, err, strings.TrimSpace(string(out)))
 		}
@@ -513,7 +515,7 @@ func (r Request) mountFunc() func(src, dir, opts string) error {
 		} else if src != "" {
 			args = append(args, src)
 		}
-		out, err := exec.Command("mount", append(args, target)...).CombinedOutput()
+		out, err := proc.CombinedOutput(exec.Command("mount", append(args, target)...))
 		if err != nil {
 			return fmt.Errorf("mount -o %s %s %s: %w: %s", opts, src, dir, err, strings.TrimSpace(string(out)))
 		}

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/emdioh/wa-transcriber/internal/imageupdate"
+	"github.com/emdioh/wa-transcriber/internal/proc"
 	"github.com/emdioh/wa-transcriber/internal/update"
 	"github.com/emdioh/wa-transcriber/internal/web"
 )
@@ -121,7 +122,7 @@ func remountBoot(dir string, rw bool) error {
 	if rw {
 		mode = "rw"
 	}
-	out, err := exec.Command("mount", "-o", "remount,"+mode, dir).CombinedOutput()
+	out, err := proc.CombinedOutput(exec.Command("mount", "-o", "remount,"+mode, dir))
 	if err != nil {
 		return fmt.Errorf("mount -o remount,%s %s: %w: %s", mode, dir, err, strings.TrimSpace(string(out)))
 	}
