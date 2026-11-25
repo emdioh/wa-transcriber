@@ -48,6 +48,71 @@ Read them before larger changes.
 - Tracking: `wat-gjc` (Pi 1 target) is open with these notes. The owner also
   filed M12 (`wat-b14`, "the binary as PID 1", D19) in `1955b24`/`2f7bad2`.
 
+## Where we stopped (2026-11-25, second session): M12, the binary as init
+
+**Milestone M12, branch `kernelwa` (worktree `../wa-transcriber-kernelwa`),
+7 commits, not merged, `main` untouched.** The idea: the binary *is* the
+machine's init — `init=/usr/bin/wa-transcriber` in the bootloader, no
+inittab, no `rcS`, no shell in the boot path — which is most of what a
+unikernel would buy on this hardware without giving up `wpa_supplicant`. The
+design (D19 and section 12) is in the **branch's** `docs/ARCHITECTURE.md`, so
+`git show kernelwa:docs/ARCHITECTURE.md` until it merges.
+
+What the branch adds: `internal/boot` (mounts /proc /sys /dev, the tmpfs set,
+hostname, lo, `/boot` ro from p1, `/data` from p4 including the first-boot
+`sfdisk`+`mkfs.ext4` port of S01data, watchdog module, the `console=` shell
+including the CDC-ACM gadget S02console used to create) and `internal/proc`
+(the pids it starts, plus a sweep that reaps only zombies it never started —
+a blanket `wait4(-1)` steals `os/exec`'s exit statuses, measured). A failed
+`Setup` execs `/sbin/init`, so a bad boot comes up the old way with a console
+instead of needing a card reader. `cmd/wa-transcriber/initmode.go` holds the
+flags `/etc/inittab` used to pass, overridable from the kernel command line
+as `wat.<flag>=<value>`.
+
+**Two board attempts, both found bugs before the boot path could be judged**
+(notes in `wat-b14.1`):
+
+1. kernel panic `Attempted to kill init! exitcode=0x100` — "am I init" read
+   `/proc/cmdline` before `/proc` was mounted, so it answered no, `/data` was
+   never mounted and the program exited on the read-only root (`b93db1d`);
+2. the second attempt never got that far: `mmc0: error -110 doing runtime
+   resume`, then 245 I/O errors, `Journal has aborted` on mmcblk0p4. Open
+   question for tomorrow: **the card or the sdhci host?** The owner thinks the
+   card is fine; the `-110` came *before* the I/O storm, which points at the
+   host wedging under a 24 MB write burst. Ask for a **power cycle** (not a
+   reboot) and `dmesg | grep -c "I/O error"` = 0 before trusting that card.
+
+Also found and fixed while testing: no PATH (the kernel gives init `HOME` and
+`TERM` only), lo down, `/var/log` being a symlink to `/tmp` so every start
+stacked another tmpfs on `/tmp`, and the missing USB console.
+
+**The image is built and verified** (from the branch; the primary checkout was
+briefly on `kernelwa` for it and is back on `main`):
+
+```
+os/_output/bbb/images/sdcard.img   369099264 bytes
+sha256 38df5bd846f0648c051a3b0db9bb0043d692669031b76064773a2c22dd9145dc
+```
+
+`boot.vfat::/extlinux/extlinux.conf` contains `init=/usr/bin/wa-transcriber`;
+`/usr/bin/wa-transcriber` is the branch build (`md5 6d9d3c95…`). It has 3
+partitions — `DATA` is created on first boot *by the new code*, which is the
+riskiest path in the branch.
+
+**Tomorrow, in order:** (1) power-cycle and confirm the card/controller is
+clean; (2) flash that image to the card and boot it with the console attached;
+(3) check `init mode flags=…`, `/proc/1/comm` = `wa-transcriber`, `mount`
+(`/boot` ro vfat, `/data` ext4 created from Go), the web UI, then a pairing;
+(4) if anything fails, the console says `init mode failed (…), starting
+/sbin/init` and the device is usable the old way — send that line.
+
+Two practical notes. Pushing a binary over the console works this way and is
+worth keeping: `gzip -9 | base64 -w 76`, then on the board `head -c <len> > f`
+with the tty raw and the host writing in paced chunks, **md5-check the result
+before installing it** (an unverified transfer once overwrote the binary with
+a corrupt one). And `os/board/rpi1/config.txt` has an uncommitted
+`uart_2ndstage=1` change that is not mine — leave it.
+
 ## Where we stopped (2026-11-23)
 
 **The board now boots from its eMMC.** Verified over ttyACM0 after the owner
