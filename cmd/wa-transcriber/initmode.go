@@ -28,6 +28,21 @@ var initDefaults = map[string]string{
 	"bootstrap":    "/usr/bin/wa-transcriber",
 }
 
+// initPath is the PATH the kernel does not give init: it passes a private
+// environment with HOME and TERM and nothing else, and every helper the boot
+// path and the network manager run (getty, modprobe, sfdisk, partx, mkfs.ext4,
+// e2fsck, ntpd, udhcpc, wpa_supplicant) lives in one of these directories.
+// Without it every exec by bare name fails with "executable file not found".
+const initPath = "/sbin:/usr/sbin:/bin:/usr/bin"
+
+// setInitEnv fills the environment the kernel does not pass to init.
+func setInitEnv(lookupEnv func(string) (string, bool), setenv func(string, string) error) {
+	if _, ok := lookupEnv("PATH"); ok {
+		return
+	}
+	_ = setenv("PATH", initPath)
+}
+
 // watchdogModules are tried in order: the driver differs per board (BCM2835
 // for the Raspberry Pies, OMAP for the BeagleBone) and only the first one
 // that loads matters.

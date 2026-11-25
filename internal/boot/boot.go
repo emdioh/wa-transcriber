@@ -63,6 +63,8 @@ type Options struct {
 	// Spawn starts the console login on a tty (nil: busybox getty in a
 	// respawn loop).
 	Spawn func(tty string)
+	// IfUp brings an interface up (nil: netlink-free ioctl on Linux).
+	IfUp func(name string) error
 	// Modules are kernel modules to load, in order, stopping at the first one
 	// that loads (the watchdog driver differs per board).
 	Modules []string
@@ -149,6 +151,11 @@ func Setup(ctx context.Context, o Options) error {
 		}
 	}
 	o.setHostname()
+	// Nothing else brings lo up on this image, and without it a health check
+	// on 127.0.0.1 answers "network unreachable".
+	if err := o.ifUp("lo"); err != nil {
+		o.Log.Warn("cannot bring lo up", "err", err)
+	}
 	// An unmounted boot partition only means the installer-written wat.txt is
 	// not read and an image update is unavailable: the device still works, so
 	// this is a warning, not a failure.
@@ -160,6 +167,14 @@ func Setup(ctx context.Context, o Options) error {
 	// broken is still reachable.
 	o.setupConsole(ctx)
 	return o.mountData(ctx)
+}
+
+// ifUp brings a network interface up.
+func (o Options) ifUp(name string) error {
+	if o.IfUp != nil {
+		return o.IfUp(name)
+	}
+	return interfaceUp(name)
 }
 
 func pseudoMounts() []mountSpec {

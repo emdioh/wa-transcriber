@@ -26,6 +26,7 @@ type fakeMachine struct {
 	calls     []mountSpec
 	runs      []string
 	runFunc   func(stdin, name string, args []string) error
+	ifUp      []string
 }
 
 func newFakeMachine(t *testing.T) *fakeMachine {
@@ -102,6 +103,7 @@ func (m *fakeMachine) options() Options {
 		Mount:    m.mount,
 		ReadFile: os.ReadFile,
 		MkdirAll: func(string, os.FileMode) error { return nil },
+		IfUp:     func(name string) error { m.ifUp = append(m.ifUp, name); return nil },
 		Run: func(_ context.Context, stdin, name string, args ...string) error {
 			m.runs = append(m.runs, record(name, args, stdin))
 			if m.runFunc != nil {
@@ -169,6 +171,9 @@ func TestSetupMountsPseudoFilesystemsOnce(t *testing.T) {
 	}
 	if m.mounted("/data") != nil {
 		t.Error("/data was mounted again although the table already had it")
+	}
+	if len(m.ifUp) != 1 || m.ifUp[0] != "lo" {
+		t.Errorf("interfaces brought up = %v, want lo", m.ifUp)
 	}
 	if !m.ran("modprobe omap_wdt") {
 		t.Errorf("the watchdog module was not loaded: %v", m.runs)

@@ -105,6 +105,7 @@ func run() error {
 	// kernel command line has to name this binary as init.
 	asInit = *initFlag || (boot.IsInit() && kernelInitIsUs(readKernelCmdline()))
 	if asInit {
+		setInitEnv(os.LookupEnv, os.Setenv)
 		applied, err := applyInitDefaults(flag.CommandLine, readKernelCmdline(), os.LookupEnv)
 		if err != nil {
 			return err

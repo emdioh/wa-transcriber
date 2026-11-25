@@ -10,6 +10,25 @@ import (
 // noEnv is a machine with no WAT_* variable set, which is a board.
 func noEnv(string) (string, bool) { return "", false }
 
+// TestSetInitEnv: the kernel gives init no PATH, and every helper is run by
+// bare name.
+func TestSetInitEnv(t *testing.T) {
+	env := map[string]string{"HOME": "/"}
+	setInitEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok },
+		func(k, v string) error { env[k] = v; return nil })
+	want := "/sbin:/usr/sbin:/bin:/usr/bin"
+	if env["PATH"] != want {
+		t.Fatalf("PATH = %q, want %q", env["PATH"], want)
+	}
+	// An environment that has one (a service manager, Docker) is left alone.
+	env = map[string]string{"PATH": "/usr/local/bin"}
+	setInitEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok },
+		func(k, v string) error { env[k] = v; return nil })
+	if env["PATH"] != "/usr/local/bin" {
+		t.Fatalf("PATH = %q, want the caller's", env["PATH"])
+	}
+}
+
 func TestKernelInitIsUs(t *testing.T) {
 	tests := []struct {
 		cmdline string
