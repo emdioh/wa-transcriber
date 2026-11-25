@@ -551,6 +551,7 @@ before the rest of the program starts, in this order:
 | `/boot` = p1 of the running root's disk, vfat, `ro` | `S00boot` | `wat.txt` (the setup AP key) and the image updater read it |
 | `modprobe bcm2835_wdt` / `omap_wdt` | `S90watchdog` | the watchdog has to be openable before the app arms it |
 | `/data` = the partition labelled `DATA` from p4 up, created with `sfdisk`/`mkfs.ext4` on a card that has none | `S01data` | the session and the settings live there, and the boot gate re-execs a binary from it |
+| the opt-in debug shell: `getty` on the UART, on tty1, or on a CDC-ACM gadget the program itself creates through configfs | `S02console` | the USB console exists only while a userspace program makes it. Booting as init without this step would take the console away exactly when a change to the boot path is being tested; it is off unless `console=` in `wat.txt` says otherwise, and it is the one place where the init path still starts busybox |
 
 The rules of the shell script survive the port because they are what makes a
 power cut during the first boot harmless: an existing `DATA` filesystem is

@@ -43,7 +43,10 @@ Verified here, without a board:
 - the normal path is unchanged: the container image still comes up in setup
   mode and answers `200` on `/healthz` (Podman, amd64), and `-init` in a
   container without mount rights fails loudly and stays alive waiting for the
-  watchdog instead of dying with a kernel panic.
+  watchdog instead of dying with a kernel panic;
+- the debug console is ported too (`console=` in `wat.txt`): the CDC-ACM
+  gadget is created through configfs by the program, so flipping `init=` does
+  not take away the only way onto a board without a keyboard.
 
 Not verified: **the real boot on the board** (mounts, `sfdisk` on the card,
 the reaped orphans of the WiFi daemons). That needs the owner: flash a card

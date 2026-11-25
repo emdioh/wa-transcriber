@@ -40,7 +40,9 @@ kernel execs it directly and `/etc/inittab`, `rcS` and every script in
 `rootfs-overlay/etc/init.d` are skipped. `internal/boot` does what they did —
 mounts, hostname, watchdog module, `/boot`, `/data` — and
 `internal/proc` reaps the children nobody waits for, because PID 1 is the only
-reaper on the machine. Architecture: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
+reaper on the machine. `console=` in `wat.txt` works as before: the program
+creates the USB gadget itself (configfs) and starts the getty, because with no
+inittab there would otherwise be no way onto the board. Architecture: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
 D19 and section 12. The settings `/etc/inittab` used to pass are the defaults
 in `cmd/wa-transcriber/initmode.go`, and the kernel command line overrides them:
 

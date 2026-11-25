@@ -52,6 +52,17 @@ type Options struct {
 	Root string
 	// HostnameFile is read for the machine name ("" skips setting it).
 	HostnameFile string
+	// WatFile is the installer-edited file on the boot partition: the
+	// console= line and the WiFi provisioning live there.
+	WatFile string
+	// ModelFile is the device tree's model string, used to pick the UART.
+	ModelFile string
+	// ConfigFS and UDCDir are where the USB gadget is built and bound.
+	ConfigFS string
+	UDCDir   string
+	// Spawn starts the console login on a tty (nil: busybox getty in a
+	// respawn loop).
+	Spawn func(tty string)
 	// Modules are kernel modules to load, in order, stopping at the first one
 	// that loads (the watchdog driver differs per board).
 	Modules []string
@@ -107,6 +118,18 @@ func (o Options) withDefaults() Options {
 	if o.Run == nil {
 		o.Run = runCmd
 	}
+	if o.WatFile == "" {
+		o.WatFile = "/boot/wat.txt"
+	}
+	if o.ModelFile == "" {
+		o.ModelFile = "/proc/device-tree/model"
+	}
+	if o.ConfigFS == "" {
+		o.ConfigFS = "/sys/kernel/config"
+	}
+	if o.UDCDir == "" {
+		o.UDCDir = "/sys/class/udc"
+	}
 	return o
 }
 
@@ -133,6 +156,9 @@ func Setup(ctx context.Context, o Options) error {
 		o.Log.Warn("boot partition not mounted, wat.txt is ignored", "err", err)
 	}
 	o.loadModules(ctx)
+	// Before /data: the debug shell is how a board whose data partition is
+	// broken is still reachable.
+	o.setupConsole(ctx)
 	return o.mountData(ctx)
 }
 
