@@ -27,10 +27,32 @@ Services, all started from `board/common/rootfs-overlay`:
 | `S02console` | optional debug login shell, off unless `wat.txt` says `console=serial`, `usb` or `both` |
 | `S40ntpd` | busybox `ntpd` against two servers; the binary waits for a sane clock anyway |
 | `S90watchdog` | loads `bcm2835_wdt` / `omap_wdt` |
-| `inittab` | `::respawn:` the transcriber with `-data /data -network managed -listen :80 -watchdog /dev/watchdog` |
+| `inittab` | `::respawn:` the transcriber with `-data /data -network managed -listen :80 -watchdog /dev/watchdog` — **not used on a board that boots with `init=`**, see "Init mode" below |
 
 The watchdog is fed by the binary itself (5 s interval). `kill -STOP` the
 process and the board reboots within ~20 s: that is the recovery path.
+
+## Init mode
+
+The BeagleBone Black image boots the transcriber as the machine's init
+(`init=/usr/bin/wa-transcriber` in `boot/extlinux/extlinux.conf`), so the
+kernel execs it directly and `/etc/inittab`, `rcS` and every script in
+`rootfs-overlay/etc/init.d` are skipped. `internal/boot` does what they did —
+mounts, hostname, watchdog module, `/boot`, `/data` — and
+`internal/proc` reaps the children nobody waits for, because PID 1 is the only
+reaper on the machine. Architecture: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
+D19 and section 12. The settings `/etc/inittab` used to pass are the defaults
+in `cmd/wa-transcriber/initmode.go`, and the kernel command line overrides them:
+
+```txt
+append root=/dev/mmcblk0p2 ro rootwait ... init=/usr/bin/wa-transcriber wat.network=none
+```
+
+**Rollback without a reflash:** mount the boot partition on any machine and
+delete the `init=` token. The kernel then starts busybox init again and the old
+script path runs, exactly as before D19. The other boards still boot that way
+(the Raspberry Pi images need their own first-boot story for `/data` before
+`cmdline.txt` gets the token).
 
 ## Debug console
 

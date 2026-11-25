@@ -169,6 +169,30 @@ for board in bbb:beagle:/boot/extlinux/extlinux.conf rpi1:rpi1:/boot/cmdline.txt
 done
 grep -q 'sysinit:/etc/init.d/rcS' "$OVL/etc/inittab" ||
 	fail "inittab does not run rcS"
+# Init mode (D19): the BeagleBone boots the transcriber as init, so the
+# settings inittab carries above have to exist as its defaults, and the boot
+# line has to name it.
+grep -q 'init=/usr/bin/wa-transcriber' "$HERE/board/bbb/extlinux.conf" ||
+	fail "board/bbb/extlinux.conf does not start the transcriber as init (D19)"
+INITMODE="$HERE/../cmd/wa-transcriber/initmode.go"
+for setting in 'data=boot.DataDir' 'listen=":80"' 'network="managed"' \
+	'watchdog="/dev/watchdog"' 'update-dir="/data/bin"' \
+	'bootstrap="/usr/bin/wa-transcriber"' 'image-update="/data"'; do
+	name=${setting%%=*}
+	value=${setting#*=}
+	grep -qE "^[[:space:]]*\"$name\":[[:space:]]*$value" "$INITMODE" ||
+		fail "initmode.go lacks the init default \"$name\": $value (the inittab values must not drift)"
+done
+# The boot path may not depend on a shell: the Go side does the partitions.
+BOOTPKG="$HERE/../internal/boot"
+grep -q 'sfdisk", "--append", "--no-reread"' "$BOOTPKG/disk.go" ||
+	fail "internal/boot does not create the DATA partition with sfdisk --no-reread"
+grep -q '"partx", "-a", "--nr", "4"' "$BOOTPKG/disk.go" ||
+	fail "internal/boot must let the kernel see the new partition (partx -a)"
+grep -q '"mkfs.ext4", "-q", "-L", DataLabel' "$BOOTPKG/disk.go" ||
+	fail "internal/boot does not format a fresh DATA partition with its label"
+grep -q 'e2fsck", "-p"' "$BOOTPKG/disk.go" ||
+	fail "internal/boot does not check the data filesystem once after a failed mount"
 grep -q '^LABEL=DATA' "$OVL/etc/fstab" || fail "fstab does not mount the DATA partition"
 grep -q '^LABEL=DATA.*noauto' "$OVL/etc/fstab" ||
 	fail "LABEL=DATA must be noauto: S01data mounts it after creating it"

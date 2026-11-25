@@ -21,11 +21,13 @@ import (
 
 	"go.mau.fi/whatsmeow/types"
 
+	"github.com/emdioh/wa-transcriber/internal/boot"
 	"github.com/emdioh/wa-transcriber/internal/bot"
 	"github.com/emdioh/wa-transcriber/internal/config"
 	"github.com/emdioh/wa-transcriber/internal/coord"
 	"github.com/emdioh/wa-transcriber/internal/logbuf"
 	"github.com/emdioh/wa-transcriber/internal/netmgr"
+	"github.com/emdioh/wa-transcriber/internal/proc"
 	"github.com/emdioh/wa-transcriber/internal/status"
 	"github.com/emdioh/wa-transcriber/internal/transcribe"
 	"github.com/emdioh/wa-transcriber/internal/wa"
@@ -43,8 +45,24 @@ var (
 	buildTime string
 )
 
+// asInit is set by run: the kernel started this binary as init (D19).
+var asInit bool
+
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			if asInit {
+				boot.Crash(slog.Default(), fmt.Errorf("panic: %v\n%s", r, debug.Stack()))
+			}
+			panic(r)
+		}
+	}()
 	if err := run(); err != nil {
+		if asInit {
+			// An init that exits is a kernel panic ("Attempted to kill
+			// init"); a device with no keyboard has to come back on its own.
+			boot.Crash(slog.Default(), err)
+		}
 		fmt.Fprintln(os.Stderr, "wa-transcriber:", err)
 		os.Exit(1)
 	}
@@ -77,9 +95,22 @@ func run() error {
 	flashConfirm := flag.String("flash-confirm", "",
 		"the device name, to confirm -flash (an accidental -flash must not write a disk)")
 	flashBoot := flag.String("flash-boot", "/boot", "boot partition for the migration marker of -flash")
+	initFlag := flag.Bool("init", false,
+		"run as the machine's init (D19): mount the filesystems, load the watchdog module, never exit")
 	bootstrap := flag.String("bootstrap", os.Getenv("WAT_BOOTSTRAP"),
 		"binary restart() re-execs: the factory binary that runs the boot gate, empty for this executable (env WAT_BOOTSTRAP)")
 	flag.Parse()
+
+	// Init mode: PID 1 alone is not enough (a container has that too), the
+	// kernel command line has to name this binary as init.
+	asInit = *initFlag || (boot.IsInit() && kernelInitIsUs(readKernelCmdline()))
+	if asInit {
+		applied, err := applyInitDefaults(flag.CommandLine, readKernelCmdline(), os.LookupEnv)
+		if err != nil {
+			return err
+		}
+		slog.Default().Info("init mode", "flags", applied)
+	}
 	if *showVersion {
 		fmt.Println(version)
 		return nil
@@ -98,6 +129,19 @@ func run() error {
 		return nil
 	}
 
+	if asInit {
+		// Order matters: /proc for the memory size below, /data for the
+		// settings and the session, and the tmpfs that /etc/resolv.conf is a
+		// symlink into before the network manager writes a name server.
+		if err := boot.Setup(context.Background(), boot.Options{
+			Log:          slog.Default(),
+			HostnameFile: "/etc/hostname",
+			Modules:      watchdogModules,
+		}); err != nil {
+			return fmt.Errorf("init: %w", err)
+		}
+	}
+
 	memTotal := logbuf.MemTotal()
 	setMemoryLimit(memTotal)
 	logs := logbuf.New(logbuf.SizeForMemory(memTotal), os.Stderr)
@@ -107,6 +151,13 @@ func run() error {
 	}
 	log := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
+	if asInit {
+		// One table for every child process: as init, a daemonised
+		// wpa_supplicant is reparented to us and nothing else would reap it.
+		proc.SetDefault(proc.New(func(format string, args ...any) {
+			log.Info(fmt.Sprintf(format, args...))
+		}))
+	}
 	log.Info("starting", "version", version, "data", *dataDir, "listen", *listen,
 		"mem_total_mb", memTotal>>20, "mem_limit_mb", memoryLimitMB(),
 		"update_dir", *updateDir)
@@ -157,6 +208,9 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if asInit {
+		go proc.Default().ReapLoop(ctx, "/proc", time.Second)
+	}
 
 	nm, err := netmgr.NewWithData(*networkMode, *dataDir)
 	if err != nil {
@@ -340,6 +394,10 @@ func run() error {
 			InAPMode: nm.InAPMode,
 			Log:      log,
 		})
+		if asInit {
+			// No inittab, so the time daemon S40ntpd used to start is ours.
+			startNTP(ctx, log)
+		}
 		if !netmgr.WaitClock(ctx, netmgr.ClockCheck{
 			Managed:   managed,
 			Now:       time.Now,

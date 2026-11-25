@@ -52,6 +52,8 @@ v1, several WhatsApp accounts per device, Internet exposure of the UI.
 | D16 | **A carrier loss never touches the interface address**, and neither does a DHCP rebind: the rootfs overlay ships its own idempotent udhcpc script, and flushing is an explicit `Ethernet.Flush` teardown | Flush on carrier down (M5 as first designed); keep the stock script and pass `udhcpc -R` | Flushing the address on a carrier blip kills the WhatsApp websocket, in-flight uploads and mDNS sockets — and the boards flap right after boot (wat-f2z.9). The destructiveness is in the *script*, not in a client flag: busybox `udhcpc` runs it with `deconfig` before every attempt, and Buildroot's version does `ifconfig $interface 0.0.0.0` there and `ifconfig $interface $ip …` on `bound` — both drop the address. `-R` is worse, not better: it means "release IP on exit", so it runs `deconfig` again on the way out. Our script no-ops on `deconfig` and uses `ip addr replace` (a netlink no-op for an identical address) on `bound`/`renew`; the overlay is rsynced after packages, so it replaces the stock file. |
 | D17 | **Binary updates from GitHub releases, executed from `/data/bin` with three slots (active / previous / pending) and the read-only factory binary as the bootstrap** | Remounting the rootfs rw and overwriting `/usr/bin/wa-transcriber`; full A/B image updates (RAUC, swupdate); a Docker self-update | A running executable cannot be replaced anyway, and the rootfs is read-only by design (D13). Keeping the runtime binary on `/data` makes an update one file write plus one `exec`: no partition, bootloader or image work, and the factory binary on the read-only root can never be damaged by a failed update. Three slots (current, previous, next) is the most a small card needs for rollback; a try counter in `state.json` turns a crash loop into an automatic rollback. Docker is out on purpose: the scratch image has nothing to exec from a volume. Full-image updates wait for a second root slot. |
 | D18 | **Image updates write the inactive of two root slots; the boot partition (FAT) holds the slot choice and the boot counter; `/data` is never touched** | RAUC/SWUpdate bundles + U-Boot bootchooser; overwriting the single root in place | Two root partitions are the minimum honest A/B: a slot being written is never the one running, and `/data` (session, settings) does not move, so an image update cannot cost a re-pairing. The choice must sit where the bootloader can read *and write* it, which on these boards is the FAT boot partition, not ext4 `/data`. RAUC would work but brings a daemon, a D-Bus and a bundle format for one device class; the health gate we already have (M9) is the same idea in 20 lines. Cost: one reflash, because the partition table changes. |
+| D19 | **The binary is the machine's init** on the boards: the bootloader command line carries `init=/usr/bin/wa-transcriber`, so there is no `/etc/inittab`, no `rcS` and no shell in the boot path. The program mounts `/proc`, `/sys`, `/dev`, the tmpfs list, `/boot` (p1, read-only) and `/data` (p4), loads the watchdog module, reaps the children nobody waits for, and turns a fatal error into a reboot instead of an exit | busybox init + the `S00boot`/`S01data`/`rcS` scripts (what the images ship today); a real unikernel (TamaGo/Unikraft); a hand-written init in C | Most of what a unikernel would buy — one process, a 1–2 s boot, no shell to find in the field, a boot path with no script in it — without giving up the one thing only Linux has on this hardware: `wpa_supplicant`/`hostapd` for the WiFi. The scripts it replaces are not deleted: removing the `init=` token from the boot partition boots the old path, which is the rollback for a board that misbehaves. Costs the console shell (opt-in `console=` still logs), and a panic is now a reboot: `internal/proc` has to own every `Wait` for that to be safe. |
+
 
 ## 3. Process layout
 
@@ -526,3 +528,57 @@ leaves the marker in place and the next boot copies everything again onto
 identical files, and no source is ever written. Without the marker the device
 boots unpaired, which is the only cost of an interrupted migration and not of
 an interrupted clone.
+
+## 12. Init mode (D19)
+
+The image can start the transcriber as the machine's init instead of starting
+busybox init and letting `/etc/inittab` respawn it. The bootloader says so:
+
+```
+append root=/dev/mmcblk0p2 … init=/usr/bin/wa-transcriber
+```
+
+The BeagleBone Black's `extlinux.conf` ships that token; the Raspberry Pis do
+not yet (`cmdline.txt` needs its own first-boot story for `/data`, see the
+bead). Everything the old boot path did in shell is done by `internal/boot`
+before the rest of the program starts, in this order:
+
+| Step | Was | Why the order |
+|---|---|---|
+| `mount /proc`, `/sys`, `/dev`, `/dev/pts`, `/dev/shm` | `fstab` + `mount -a` in `rcS` | the memory size, the sysfs device walk and every block node need them |
+| `mount` the tmpfs set (`/tmp`, `/run`, `/var/log`, `/var/lib`, `/var/lib/misc`) | same | `/etc/resolv.conf` is a symlink into `/tmp`: a DHCP client cannot write a name server before it exists |
+| `Sethostname` from `/etc/hostname` | `hostname -F` | nothing else would do it |
+| `/boot` = p1 of the running root's disk, vfat, `ro` | `S00boot` | `wat.txt` (the setup AP key) and the image updater read it |
+| `modprobe bcm2835_wdt` / `omap_wdt` | `S90watchdog` | the watchdog has to be openable before the app arms it |
+| `/data` = the partition labelled `DATA` from p4 up, created with `sfdisk`/`mkfs.ext4` on a card that has none | `S01data` | the session and the settings live there, and the boot gate re-execs a binary from it |
+
+The rules of the shell script survive the port because they are what makes a
+power cut during the first boot harmless: an existing `DATA` filesystem is
+never touched, a partition carrying a filesystem this cannot name is left
+alone (the device runs without `/data` rather than formatting a stranger), and
+the two root slots are never candidates whatever their label. `blkid` is not
+needed either: the label and the filesystem kind are read from the superblock
+bytes.
+
+The settings `/etc/inittab` used to carry are `initDefaults` in
+`cmd/wa-transcriber/initmode.go`, and the kernel command line overrides any of
+them with `wat.<flag>=<value>` (`wat.network=none` is the useful one on a
+bench). PID 1 alone does not switch the mode on — a container has that too —
+the command line has to name the binary as init.
+
+Two things follow from being PID 1:
+
+- **Exit is a kernel panic.** `boot.Crash` writes the reason to `/dev/kmsg`,
+  which the kernel prints on every active console, remounts nothing, reboots,
+  and — if the reboot is refused — blocks with the watchdog still unpetted, so
+  the hardware resets within ~20 s either way.
+- **Every child process is ours to reap.** `wpa_supplicant`, `hostapd` and
+  `dnsmasq` daemonise: the process that ends up as a child of init is not the
+  one that was started and nobody waits for its exit. A blanket `wait4(-1)`
+  goroutine is not the answer — it steals the exit status of the children
+  `os/exec` is waiting for, and their `Wait` then fails with "waitid: no child
+  processes" (measured: 2 of 200 `cmd.Run()` calls on Go 1.26). So
+  `internal/proc` records every pid the program starts, and a sweep every
+  second reaps only the zombies whose pid it never recorded. Every launch site
+  goes through that table (`proc.Run`, `proc.Start`/`proc.Wait`,
+  `proc.CombinedOutput`).
