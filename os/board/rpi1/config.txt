@@ -8,3 +8,7 @@ dtparam=audio=off
 # the debug getty on it when wat.txt says console=serial/both/all (the images
 # ship console=all).
 enable_uart=1
+# The firmware's own log goes to the same serial port as the kernel's. Without
+# a display, or when the firmware stops before the kernel, this is the only
+# thing that says what it was looking for (dtb name, kernel file, SD errors).
+uart_2ndstage=1

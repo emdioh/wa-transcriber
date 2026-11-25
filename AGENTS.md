@@ -6,6 +6,48 @@ Project rules, architecture and milestones are in
 without discussing) and [docs/STATUS.md](docs/STATUS.md) (what is verified).
 Read them before larger changes.
 
+## Where we stopped (2026-11-25): the board is a Pi 1, and it does not boot yet
+
+- The owner's Raspberry Pi is a **Pi 1 Model B, silkscreen "2011.12"** (BCM2835,
+  **ARMv6**), so the published `rpi2.img` can never boot it: ARMv7 kernel,
+  `GOARM=7` binary, bcm2709/bcm2710 dtbs. Stock Raspberry Pi OS boots on the
+  same card, board, PSU and HDMI.
+- **New board target**: `make -C os rpi1` ->
+  `os/_output/rpi1/images/sdcard.img`. arm1176jzf_s toolchain, `bcmrpi` kernel
+  6.1.61 (`CONFIG_CPU_V6K`), **13 dtbs covering both naming families**
+  (`bcm2708-rpi-*` and `bcm2835-rpi-*`; the firmware picks by model and asks for
+  the new names since 5.10), `make build-arm6` ->
+  `dist/wa-transcriber-linux-armv6`, `BR2_PACKAGE_WA_TRANSCRIBER_ARCH="armv6"`,
+  plus the `linux-armv6` asset and the `rpi1.img` key in `tools/wat-manifest`.
+  Docs in `os/README.md`, PLAN M6, STATUS M6, `docs/hardware.md`,
+  `docs/image-release.md`.
+- **What has been proven**: the rpi1 image builds; our *rpi2* image boots
+  end to end under `qemu -M raspi2b`. `qemu -M raspi1ap` is unusable (our
+  kernel takes an unhandled external abort on an unemulated device at
+  `0xdc975020` before it can find root), so the Pi 1 image is testable only on
+  the owner's board.
+- **How it fails on the board**: first nothing at all, then (once the boot
+  partition was reshaped to Pi OS geometry: p1 at 8 MiB, real FAT32 with
+  512-byte clusters, 64 MB) a green LED pattern, "3 short flashes then a long
+  pause", still **no rainbow** — i.e. the firmware stops before it draws
+  anything, let alone loads a kernel.
+- **Bisect in flight** (owner has the cards, no serial adapter): our `zImage`
+  + our dtbs copied onto the *stock Pi OS card* with `kernel=zImage` appended.
+  The owner reports it "booted completely", which still needs confirming with
+  `uname -r` (`6.1.61` = ours, `*+rpt-rpi-v6` = stock). If it was ours, the
+  kernel is fine and the fault is our card's boot partition *shape*
+  (64 MB p1 vs single-partition layout questions: 512 MB and three partitions
+  vs two) — next experiment is our firmware + `config.txt` on the stock card,
+  then a stock-shaped rpi1 image.
+- `uart_2ndstage=1` is now in `board/rpi1/config.txt`, so the firmware's own
+  log appears on GPIO14/15 at 115200 with a 3.3 V USB-TTL adapter. That is the
+  fastest way out if the card bisect stalls.
+- **Nothing published**: `v0.2.0` still carries the *old* `rpi2.img`; the
+  rebuilt rpi2 (13 dtbs) and rpi1 images exist only under `os/_output/`. Do not
+  add `rpi1.img` to the release until it boots on the board.
+- Tracking: `wat-gjc` (Pi 1 target) is open with these notes. The owner also
+  filed M12 (`wat-b14`, "the binary as PID 1", D19) in `1955b24`/`2f7bad2`.
+
 ## Where we stopped (2026-11-23)
 
 **The board now boots from its eMMC.** Verified over ttyACM0 after the owner
