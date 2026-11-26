@@ -47,12 +47,13 @@ spawn() {
 }
 
 # The console UART, told apart by the model string: the BeagleBone uses
-# 8250_omap (ttyS0, ttyO0 was the name before Linux 4.11), the Raspberry Pi 2
-# exposes the PL011 as ttyAMA0 (ttyS0 there is the mini UART on other pins).
+# 8250_omap (ttyS0, ttyO0 was the name before Linux 4.11), the Cubieboard 1
+# uses Allwinner A10 UART0 (ttyS0), and the Raspberry Pi 1/2 exposes the PL011
+# as ttyAMA0 (ttyS0 there is the mini UART on other pins).
 serial_dev() {
 	model=$(tr -d '\0' </proc/device-tree/model 2>/dev/null)
 	case "$model" in
-	*BeagleBone*) echo ttyS0 ;;
+	*BeagleBone* | *Cubieboard*) echo ttyS0 ;;
 	*Raspberry*) echo ttyAMA0 ;;
 	*) for d in ttyS0 ttyAMA0; do
 		if [ -c "/dev/$d" ]; then

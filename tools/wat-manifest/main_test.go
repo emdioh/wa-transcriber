@@ -209,10 +209,13 @@ func TestManifestWithImages(t *testing.T) {
 	dist := t.TempDir()
 	writeFakeAssets(t, dist)
 	imgDir := t.TempDir()
-	for name, body := range map[string]string{
+	bodies := map[string]string{
 		"beagle.img": "beagle-rootfs",
+		"cubie.img":  "cubie-rootfs-sun4i",
+		"rpi1.img":   "rpi1-rootfs-armv6",
 		"rpi2.img":   "rpi2-rootfs-longer",
-	} {
+	}
+	for name, body := range bodies {
 		if err := os.WriteFile(filepath.Join(imgDir, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -222,10 +225,10 @@ func TestManifestWithImages(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	got := readImages(t, out)
-	if len(got) != 2 {
-		t.Fatalf("images = %v, want beagle and rpi2", got)
+	if len(got) != len(bodies) {
+		t.Fatalf("images = %v, want beagle, cubie, rpi1 and rpi2", got)
 	}
-	for _, name := range []string{"beagle.img", "rpi2.img"} {
+	for _, name := range []string{"beagle.img", "cubie.img", "rpi1.img", "rpi2.img"} {
 		key := name[:len(name)-len(".img")]
 		img, ok := got[key]
 		if !ok {
@@ -234,9 +237,7 @@ func TestManifestWithImages(t *testing.T) {
 		if img.File != name {
 			t.Errorf("%s file = %q", key, img.File)
 		}
-		sum := sha256.Sum256([]byte(map[string]string{
-			"beagle.img": "beagle-rootfs", "rpi2.img": "rpi2-rootfs-longer",
-		}[name]))
+		sum := sha256.Sum256([]byte(bodies[name]))
 		if img.SHA256 != hex.EncodeToString(sum[:]) {
 			t.Errorf("%s sha256 = %q", key, img.SHA256)
 		}

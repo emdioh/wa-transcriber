@@ -1,8 +1,8 @@
 # Images (Buildroot)
 
 Flashable SD-card images for the **Raspberry Pi 1/Zero**, the **Raspberry
-Pi 2/3**, and the **BeagleBone
-Black**, built with Buildroot from a `BR2_EXTERNAL` tree in this directory.
+Pi 2/3**, the **BeagleBone Black**, and the **Cubieboard 1** (Allwinner A10),
+built with Buildroot from a `BR2_EXTERNAL` tree in this directory.
 
 Milestone M6 in [../docs/PLAN.md](../docs/PLAN.md); the hardware validation
 checklist is [../docs/hardware.md](../docs/hardware.md).
@@ -26,7 +26,7 @@ Services, all started from `board/common/rootfs-overlay`:
 | `S01data` | creates and formats partition 3 on first boot, mounts `/data` (idempotent: a power cut mid-way cannot brick the card) |
 | `S02console` | optional debug login shell, off unless `wat.txt` says `console=serial`, `usb` or `both` |
 | `S40ntpd` | busybox `ntpd` against two servers; the binary waits for a sane clock anyway |
-| `S90watchdog` | loads `bcm2835_wdt` / `omap_wdt` |
+| `S90watchdog` | loads `bcm2835_wdt` / `omap_wdt` / `sunxi_wdt` |
 | `inittab` | `::respawn:` the transcriber with `-data /data -network managed -listen :80 -watchdog /dev/watchdog` |
 
 The watchdog is fed by the binary itself (5 s interval). `kill -STOP` the
@@ -41,7 +41,7 @@ nothing else listens there. A shell is opt-in through `wat.txt`:
 |---|---|
 | `all` (what these images ship) | serial + USB + HDMI |
 | `off` | nothing |
-| `serial` | the UART header: `/dev/ttyS0` on the BeagleBone (J1, 115200 8N1, 3.3 V USB-TTL adapter), `/dev/ttyAMA0` on the Raspberry Pi 1/2 |
+| `serial` | the UART header: `/dev/ttyS0` on the BeagleBone (J1, 115200 8N1, 3.3 V USB-TTL adapter) and Cubieboard 1 (UART0), `/dev/ttyAMA0` on the Raspberry Pi 1/2 |
 | `usb` | the USB client port as a CDC-ACM gadget, `/dev/ttyGS0`; on a Linux host it appears as `/dev/ttyACM0` |
 | `hdmi` | `tty1`, i.e. the HDMI output driven by a USB keyboard on the host port |
 | `both` | `serial` + `usb` |
@@ -76,7 +76,8 @@ the Buildroot source cache, and the usual host tools (`make`, `gcc`, `bison`,
 make -C os check     # structural checks, no network, seconds
 make -C os rpi1      # -> os/_output/rpi1/images/sdcard.img   (Pi 1/Zero, ARMv6)
 make -C os rpi2      # -> os/_output/rpi2/images/sdcard.img   (Pi 2/3/Zero 2, ARMv7)
-make -C os bbb       # -> os/_output/bbb/images/sdcard.img
+make -C os bbb       # -> os/_output/bbb/images/sdcard.img    (BeagleBone Black, ARMv7)
+make -C os cubie     # -> os/_output/cubie/images/sdcard.img  (Cubieboard 1, Allwinner A10, ARMv7)
 ```
 
 The first build compiles a toolchain, the kernel and U-Boot and takes about
@@ -90,6 +91,7 @@ Measured with Buildroot 2024.02.9 on 12 cores:
 | Raspberry Pi 1/Zero | 192 MB | ~38 MB | bootcode.bin, start.elf, fixup.dat, zImage, the bcm2708 dtbs, cmdline.txt, config.txt, wat.txt |
 | Raspberry Pi 2/3 | 192 MB | 38.6 MB | bootcode.bin, start.elf, fixup.dat, zImage, the bcm2709/bcm2710 dtbs, cmdline.txt, config.txt, wat.txt |
 | BeagleBone Black | 192 MB | 50.2 MB | MLO, u-boot.img, zImage, am335x-boneblack.dtb, extlinux/, wat.txt |
+| Cubieboard 1 (A10) | 353 MB (A/B) | — | raw `u-boot-sunxi-with-spl.bin` at 8K; FAT p1: zImage, sun4i-a10-cubieboard.dtb, extlinux/, wat.txt |
 
 The image is 192 MB regardless of the card size: it is one 32 MB boot
 partition plus a 160 MB root partition; the start of the card stays free for

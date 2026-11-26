@@ -6,7 +6,7 @@
 
 case "$1" in
 start)
-	for m in bcm2835_wdt omap_wdt; do
+	for m in bcm2835_wdt omap_wdt sunxi_wdt; do
 		modprobe "$m" 2>/dev/null && break
 	done
 	[ -c /dev/watchdog ] || echo "S90watchdog: no /dev/watchdog"
