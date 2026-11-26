@@ -4,10 +4,13 @@ package boot
 
 import "golang.org/x/sys/unix"
 
-// mount is mount(2). The zero-filesystem case (a bind mount) does not occur
-// here: every call names its type.
+// mount is mount(2). Remounts pass an empty source and fstype with msRemount.
 func mount(source, target, fstype string, flags uintptr, data string) error {
 	return unix.Mount(source, target, fstype, flags, data)
+}
+
+func unmount(target string, flags int) error {
+	return unix.Unmount(target, flags)
 }
 
 func setHostname(name string) error { return unix.Sethostname([]byte(name)) }
@@ -38,4 +41,5 @@ const (
 	msNoDev    = unix.MS_NODEV
 	msNoExec   = unix.MS_NOEXEC
 	msNoAtime  = unix.MS_NOATIME
+	msRemount  = unix.MS_REMOUNT
 )

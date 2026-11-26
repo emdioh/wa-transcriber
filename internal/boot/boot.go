@@ -50,6 +50,13 @@ type Options struct {
 	SysDir  string
 	// Root is the mount point whose device identifies the running disk ("/").
 	Root string
+	// BootDir is the mount point of the FAT boot partition ("/boot").
+	BootDir string
+	// DataDir is the mount point of the DATA partition ("/data").
+	DataDir string
+	// MigrateMountDir is the temporary mount point used when a wat-migrate
+	// marker names a `from /dev/...` device ("/run/wat-migrate").
+	MigrateMountDir string
 	// HostnameFile is read for the machine name ("" skips setting it).
 	HostnameFile string
 	// WatFile is the installer-edited file on the boot partition: the
@@ -76,6 +83,7 @@ type Options struct {
 	Wait time.Duration
 
 	Mount    func(source, target, fstype string, flags uintptr, data string) error
+	Unmount  func(target string, flags int) error
 	ReadFile func(string) ([]byte, error)
 	// MkdirAll creates the mount point of a filesystem that is not there. The
 	// image has every one of them (the root filesystem is read-only), so this
@@ -83,6 +91,11 @@ type Options struct {
 	MkdirAll func(string, os.FileMode) error
 	// Run executes a helper (modprobe, sfdisk, mkfs.ext4) with optional stdin.
 	Run func(ctx context.Context, stdin, name string, args ...string) error
+
+	// Unexported hooks for unit tests to observe removal ordering without
+	// depending on filesystem permissions.
+	removeFile func(string) error
+	removeAll  func(string) error
 }
 
 // IsInit reports whether this process is PID 1, which is necessary but not
@@ -146,11 +159,23 @@ func (o Options) withDefaults() Options {
 	if o.Root == "" {
 		o.Root = "/"
 	}
+	if o.BootDir == "" {
+		o.BootDir = BootDir
+	}
+	if o.DataDir == "" {
+		o.DataDir = DataDir
+	}
+	if o.MigrateMountDir == "" {
+		o.MigrateMountDir = "/run/wat-migrate"
+	}
 	if o.Wait <= 0 {
 		o.Wait = 10 * time.Second
 	}
 	if o.Mount == nil {
 		o.Mount = mount
+	}
+	if o.Unmount == nil {
+		o.Unmount = unmount
 	}
 	if o.ReadFile == nil {
 		o.ReadFile = os.ReadFile
@@ -160,6 +185,12 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Run == nil {
 		o.Run = runCmd
+	}
+	if o.removeFile == nil {
+		o.removeFile = os.Remove
+	}
+	if o.removeAll == nil {
+		o.removeAll = os.RemoveAll
 	}
 	if o.WatFile == "" {
 		o.WatFile = "/boot/wat.txt"

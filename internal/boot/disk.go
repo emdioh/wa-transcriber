@@ -183,7 +183,7 @@ func allZero(b []byte) bool {
 // does not do it: without it wat.txt is ignored and an image update cannot
 // read the slot it is booting.
 func (o Options) mountBoot(_ context.Context) error {
-	if o.mounted(BootDir) {
+	if o.mounted(o.BootDir) {
 		return nil
 	}
 	root, err := o.rootPartition()
@@ -199,7 +199,7 @@ func (o Options) mountBoot(_ context.Context) error {
 		return fmt.Errorf("boot: %s did not appear", dev)
 	}
 	return o.ensureMount(mountSpec{
-		source: dev, target: BootDir, fstype: "vfat",
+		source: dev, target: o.BootDir, fstype: "vfat",
 		flags: msReadOnly | msNoSuid | msNoDev | msNoExec,
 	})
 }
@@ -217,7 +217,8 @@ func (o Options) mountBoot(_ context.Context) error {
 //   - the two root slots are never candidates, whatever their label: the
 //     label is the identity and only partitions from 4 up are asked.
 func (o Options) mountData(ctx context.Context) error {
-	if o.mounted(DataDir) {
+	if o.mounted(o.DataDir) {
+		o.migrateFromMarker(ctx)
 		return nil
 	}
 	root, err := o.rootPartition()
@@ -295,7 +296,11 @@ func (o Options) mountData(ctx context.Context) error {
 			dev = p4
 		}
 	}
-	return o.mountExt4(ctx, dev, DataDir)
+	if err := o.mountExt4(ctx, dev, o.DataDir); err != nil {
+		return err
+	}
+	o.migrateFromMarker(ctx)
+	return nil
 }
 
 // mountExt4 mounts the data filesystem, repairing it once if the mount fails:
