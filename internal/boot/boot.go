@@ -68,6 +68,9 @@ type Options struct {
 	// Modules are kernel modules to load, in order, stopping at the first one
 	// that loads (the watchdog driver differs per board).
 	Modules []string
+	// HotplugHelper is written to /proc/sys/kernel/hotplug so USB devices
+	// plugged in after boot trigger module loading (default "/sbin/mdev").
+	HotplugHelper string
 	// Wait is how long a freshly created partition may take to appear as a
 	// block device. Zero means 10 s.
 	Wait time.Duration
@@ -170,6 +173,9 @@ func (o Options) withDefaults() Options {
 	if o.UDCDir == "" {
 		o.UDCDir = "/sys/class/udc"
 	}
+	if o.HotplugHelper == "" {
+		o.HotplugHelper = "/sbin/mdev"
+	}
 	return o
 }
 
@@ -201,6 +207,8 @@ func Setup(ctx context.Context, o Options) error {
 		o.Log.Warn("boot partition not mounted, wat.txt is ignored", "err", err)
 	}
 	o.loadModules(ctx)
+	o.registerHotplug()
+	o.coldplugUSB(ctx)
 	// Before /data: the debug shell is how a board whose data partition is
 	// broken is still reachable.
 	o.setupConsole(ctx)
