@@ -112,14 +112,16 @@ func (o Options) setupConsole(ctx context.Context) {
 }
 
 // serialDevice names the UART header by the board's model string: the
-// BeagleBone uses 8250_omap (ttyS0, ttyO0 before Linux 4.11), the Raspberry Pi
-// 2 exposes the PL011 as ttyAMA0 (its ttyS0 is the mini UART on other pins).
+// BeagleBone uses 8250_omap (ttyS0, ttyO0 before Linux 4.11), the Cubieboard 1
+// uses Allwinner A10 UART0 (ttyS0), and the Raspberry Pi 1/2 exposes the PL011
+// as ttyAMA0 (its ttyS0 is the mini UART on other pins).
 func (o Options) serialDevice() (string, error) {
 	model, _ := o.ReadFile(o.ModelFile)
-	if strings.Contains(string(model), "BeagleBone") {
+	s := string(model)
+	if strings.Contains(s, "BeagleBone") || strings.Contains(s, "Cubieboard") {
 		return "ttyS0", nil
 	}
-	if strings.Contains(string(model), "Raspberry") {
+	if strings.Contains(s, "Raspberry") {
 		return "ttyAMA0", nil
 	}
 	for _, dev := range []string{"ttyS0", "ttyAMA0"} {

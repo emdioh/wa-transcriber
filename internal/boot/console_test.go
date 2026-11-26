@@ -281,6 +281,31 @@ func TestSetupConsoleProceedsWhenProcDirMissing(t *testing.T) {
 	}
 }
 
+func TestSerialDevice(t *testing.T) {
+	tests := []struct {
+		model string
+		want  string
+	}{
+		{"TI AM335x BeagleBone Black", "ttyS0"},
+		{"Cubietech Cubieboard", "ttyS0"},
+		{"Raspberry Pi 2 Model B Rev 1.1", "ttyAMA0"},
+	}
+	for _, tc := range tests {
+		m := newFakeMachine(t)
+		o := m.options()
+		o.ModelFile = filepath.Join(m.dir, "model")
+		writeFile(t, o.ModelFile, []byte(tc.model+"\x00"))
+		got, err := o.serialDevice()
+		if err != nil {
+			t.Errorf("serialDevice(%q): %v", tc.model, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("serialDevice(%q) = %q, want %q", tc.model, got, tc.want)
+		}
+	}
+}
+
 func keys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

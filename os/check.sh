@@ -48,7 +48,7 @@ ok "package recipe"
 
 # --- defconfigs ------------------------------------------------------------
 
-for board in rpi1 rpi2 bbb; do
+for board in rpi1 rpi2 bbb cubie; do
 	defconfig="$HERE/configs/wat_${board}_defconfig"
 	[ -f "$defconfig" ] || { fail "missing $defconfig"; continue; }
 
@@ -106,7 +106,7 @@ done
 
 # --- board files -----------------------------------------------------------
 
-for board in rpi1 rpi2 bbb; do
+for board in rpi1 rpi2 bbb cubie; do
 	for f in genimage.cfg post-build.sh; do
 		[ -f "$HERE/board/$board/$f" ] || fail "missing board/$board/$f"
 	done
@@ -121,10 +121,29 @@ for board in rpi1 rpi2 bbb; do
 	done
 	[ "$(grep -c 'size = 160M' "$HERE/board/$board/genimage.cfg")" -ge 2 ] ||
 		fail "board/$board/genimage.cfg: the two root slots must both be 160M"
-	# The boot files name the first slot by device path, and no partition
+	# The boot files name the first slot by device path, and no MBR partition
 	# number after p3 may exist in the image: DATA is created on the board.
-	[ "$(grep -c 'partition ' "$HERE/board/$board/genimage.cfg")" -eq 3 ] ||
-		fail "board/$board/genimage.cfg must define exactly three partitions (boot, root A, root B)"
+	# Raw bootloader slots with in-partition-table = "no" (such as sunxi SPL
+	# at 8K on the Cubieboard) do not take an MBR entry.
+	mbr_parts=$(awk '
+		/^[[:space:]]*partition[[:space:]]+/ { in_part = 1; in_tbl = 1 }
+		in_part && /in-partition-table[[:space:]]*=[[:space:]]*"no"/ { in_tbl = 0 }
+		in_part && /^[[:space:]]*}/ { if (in_tbl) count++; in_part = 0 }
+		END { print count + 0 }
+	' "$HERE/board/$board/genimage.cfg")
+	[ "$mbr_parts" -eq 3 ] ||
+		fail "board/$board/genimage.cfg must define exactly three MBR partitions (boot, root A, root B), got $mbr_parts"
+	if [ "$board" = cubie ]; then
+		awk '
+			/^[[:space:]]*partition[[:space:]]+u-boot/ { in_u = 1 }
+			in_u && /in-partition-table[[:space:]]*=[[:space:]]*"no"/ { no_tbl = 1 }
+			in_u && /image[[:space:]]*=[[:space:]]*"u-boot-sunxi-with-spl\.bin"/ { has_img = 1 }
+			in_u && /offset[[:space:]]*=[[:space:]]*8K/ { has_off = 1 }
+			in_u && /^[[:space:]]*}/ { in_u = 0 }
+			END { exit !(no_tbl && has_img && has_off) }
+		' "$HERE/board/cubie/genimage.cfg" ||
+			fail "board/cubie/genimage.cfg must place u-boot-sunxi-with-spl.bin with in-partition-table = \"no\" and offset = 8K"
+	fi
 	# Files named in a genimage vfat section must be produced by the build.
 	for f in $(sed -n '/vfat {/,/}/p' "$HERE/board/$board/genimage.cfg" |
 		sed -n 's/^[[:space:]]*"\([^"]*\)",*$/\1/p'); do
@@ -160,7 +179,7 @@ grep -q 'wa-transcriber -data /data .*-bootstrap /usr/bin/wa-transcriber' "$OVL/
 # board has to describe its own boot file and slots or nothing can switch.
 grep -q 'wa-transcriber -data /data .*-image-update /data' "$OVL/etc/inittab" ||
 	fail "inittab does not pass -image-update /data (image updates are off)"
-for board in bbb:beagle:/boot/extlinux/extlinux.conf rpi1:rpi1:/boot/cmdline.txt rpi2:rpi2:/boot/cmdline.txt; do
+for board in bbb:beagle:/boot/extlinux/extlinux.conf cubie:cubie:/boot/extlinux/extlinux.conf rpi1:rpi1:/boot/cmdline.txt rpi2:rpi2:/boot/cmdline.txt; do
 	dir=${board%%:*}; rest=${board#*:}; name=${rest%%:*}; boot=${rest#*:}
 	grep -q '"boot_file": "'"$boot"'"' "$HERE/board/$dir/post-build.sh" ||
 		fail "board/$dir/post-build.sh does not write etc/wat/image.json with boot_file $boot"
@@ -172,7 +191,7 @@ grep -q 'sysinit:/etc/init.d/rcS' "$OVL/etc/inittab" ||
 # Init mode (D19): every board boots the transcriber as init, so the settings
 # inittab carries above have to exist as its defaults, and each boot file has
 # to name it.
-for f in board/bbb/extlinux.conf board/rpi1/cmdline.txt board/rpi2/cmdline.txt; do
+for f in board/bbb/extlinux.conf board/cubie/extlinux.conf board/rpi1/cmdline.txt board/rpi2/cmdline.txt; do
 	grep -q 'init=/usr/bin/wa-transcriber' "$HERE/$f" ||
 		fail "$f does not start the transcriber as init (D19)"
 done
@@ -212,7 +231,7 @@ grep -q '/var/lib\ttmpfs\|/var/lib.*tmpfs' "$OVL/etc/fstab" ||
 	fail "fstab must mount a tmpfs on /var/lib (seedrng writes there)"
 # Buildroot treats the local package source as immutable, so the board
 # targets must dirclean it or the image keeps the first binary it ever had.
-for board in rpi1 rpi2 bbb; do
+for board in rpi1 rpi2 bbb cubie; do
 	grep -q "wa-transcriber-dirclean" "$HERE/Makefile" ||
 		fail "os/Makefile must dirclean the transcriber package before building"
 done
@@ -301,6 +320,10 @@ for tty in ttyS0 ttyAMA0 ttyGS0 tty1; do
 	grep -q "$tty" "$OVL/etc/init.d/S02console" ||
 		fail "S02console does not handle $tty"
 done
+grep -q '^CONFIG_SUNXI_WDT=m$' "$HERE/board/common/linux.fragment" ||
+	fail "board/common/linux.fragment does not enable CONFIG_SUNXI_WDT=m"
+grep -q 'sunxi_wdt' "$OVL/etc/init.d/S90watchdog" ||
+	fail "S90watchdog does not try sunxi_wdt"
 ok "rootfs overlay"
 
 # --- SD card helpers (unit test, no hardware) ------------------------------
@@ -347,20 +370,23 @@ ok "wat.txt template"
 
 # --- boot console ----------------------------------------------------------
 
-# Linux 6.1 names the BeagleBone UART ttyS0; console=ttyO0 matches nothing.
-# Kernel output also goes to HDMI (tty1) and starts with earlycon, so a board
-# without a serial adapter still shows what happened.
-grep -q 'console=ttyS0,115200' "$HERE/board/bbb/extlinux.conf" ||
-	fail "bbb/extlinux.conf must use console=ttyS0,115200"
+# Linux 6.1 names the BeagleBone and Cubieboard UART ttyS0; console=ttyO0
+# matches nothing on BBB. Kernel output also goes to HDMI (tty1) and starts
+# with earlycon, so a board without a serial adapter still shows what happened.
+for board in bbb cubie; do
+	cfg="$HERE/board/$board/extlinux.conf"
+	grep -q 'console=ttyS0,115200' "$cfg" ||
+		fail "$board/extlinux.conf must use console=ttyS0,115200"
+	grep -q 'console=tty1' "$cfg" ||
+		fail "$board/extlinux.conf must also log to tty1 (HDMI)"
+	grep -q 'earlycon=' "$cfg" ||
+		fail "$board/extlinux.conf has no earlycon: nothing prints before the UART driver loads"
+	grep -q 'quiet' "$cfg" &&
+		fail "$board/extlinux.conf still passes quiet: the boot log is how we debug"
+done
 if grep -q 'console=ttyO0' "$HERE/board/bbb/extlinux.conf"; then
 	fail "bbb/extlinux.conf still uses ttyO0 (renamed in Linux 4.11)"
 fi
-grep -q 'console=tty1' "$HERE/board/bbb/extlinux.conf" ||
-	fail "bbb/extlinux.conf must also log to tty1 (HDMI)"
-grep -q 'earlycon=' "$HERE/board/bbb/extlinux.conf" ||
-	fail "bbb/extlinux.conf has no earlycon: nothing prints before the UART driver loads"
-grep -q 'quiet' "$HERE/board/bbb/extlinux.conf" &&
-	fail "bbb/extlinux.conf still passes quiet: the boot log is how we debug"
 for board in rpi1 rpi2; do
 	# Raspberry Pi firmware reads only the first line of cmdline.txt.
 	[ "$(wc -l < "$HERE/board/$board/cmdline.txt")" -eq 1 ] ||
@@ -381,7 +407,7 @@ done
 # First boot is root A = p2 on all boards, by device path (D18): a UUID
 # would have to be rewritten by every image update, and the running system
 # works out the other slot from its own block device.
-for f in "$HERE/board/bbb/extlinux.conf" "$HERE/board/rpi1/cmdline.txt" "$HERE/board/rpi2/cmdline.txt"; do
+for f in "$HERE/board/bbb/extlinux.conf" "$HERE/board/cubie/extlinux.conf" "$HERE/board/rpi1/cmdline.txt" "$HERE/board/rpi2/cmdline.txt"; do
 	grep -q 'root=/dev/mmcblk0p2' "$f" ||
 		fail "$f must boot /dev/mmcblk0p2 (root A)"
 	if grep -q 'root=UUID=\|root=LABEL=' "$f"; then

@@ -5,7 +5,8 @@
 // It reads the three cross-built binaries from -dist, hashes them and writes
 // manifest.json with schema, version, release time, notes URL, an optional
 // minimum-source version, one entry per runtime arch and, when -images points
-// at them, one entry per board image (M10: beagle.img, rpi2.img). The output is
+// at them, one entry per board image (M10: beagle.img, cubie.img, rpi1.img,
+// rpi2.img). The output is
 // deterministic (fixed key order, indent 2) so re-running it on the same
 // inputs produces byte-identical bytes and a signature stays valid.
 //
@@ -71,9 +72,11 @@ type imageEntry struct {
 }
 
 // images maps a board key to the file name inside -images. The keys are the
-// boards, not architectures: the same armv7 binary runs on both.
+// boards, not architectures: the same armv7 binary runs on BeagleBone,
+// Cubieboard and Pi 2.
 var images = []struct{ key, file string }{
 	{"beagle", "beagle.img"},
+	{"cubie", "cubie.img"},
 	{"rpi1", "rpi1.img"},
 	{"rpi2", "rpi2.img"},
 }
@@ -93,7 +96,7 @@ func main() {
 	out := flag.String("out", "", "output manifest path (default <dist>/manifest.json)")
 	minFrom := flag.String("min-from", "", "oldest version allowed to update (empty = no constraint)")
 	notesURL := flag.String("notes-url", "", "release notes URL (default the GitHub tag page for -version)")
-	imagesDir := flag.String("images", "", "directory holding beagle.img and rpi2.img (empty: no images in the manifest, as in releases before M10)")
+	imagesDir := flag.String("images", "", "directory holding board images (beagle.img, cubie.img, rpi1.img, rpi2.img; empty: no images in the manifest, as in releases before M10)")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: wat-manifest -version v0.2.0 [-dist dist] [-images dir] [-out dist/manifest.json]\n\n")
 		flag.PrintDefaults()

@@ -538,9 +538,9 @@ busybox init and letting `/etc/inittab` respawn it. The bootloader says so:
 append root=/dev/mmcblk0p2 … init=/usr/bin/wa-transcriber
 ```
 
-All three board images ship that token — the BeagleBone Black in
-`extlinux.conf` and the Raspberry Pi 1 and 2 in `cmdline.txt` — with the same
-rollback on every board: mount the boot partition and remove `init=` from
+All four board images ship that token — the BeagleBone Black and Cubieboard 1
+in `extlinux.conf`, and the Raspberry Pi 1 and 2 in `cmdline.txt` — with the
+same rollback on every board: mount the boot partition and remove `init=` from
 `extlinux.conf` or `cmdline.txt` to fall back to busybox init. Everything the
 old boot path did in shell is done by `internal/boot` before the rest of the
 program starts, in this order:
@@ -551,7 +551,7 @@ program starts, in this order:
 | `mount` the tmpfs set (`/tmp`, `/run`, `/var/log`, `/var/lib`, `/var/lib/misc`) | same | `/etc/resolv.conf` is a symlink into `/tmp`: a DHCP client cannot write a name server before it exists |
 | `Sethostname` from `/etc/hostname` | `hostname -F` | nothing else would do it |
 | `/boot` = p1 of the running root's disk, vfat, `ro` | `S00boot` | `wat.txt` (the setup AP key) and the image updater read it |
-| `modprobe bcm2835_wdt` / `omap_wdt` | `S90watchdog` | the watchdog has to be openable before the app arms it |
+| `modprobe bcm2835_wdt` / `omap_wdt` / `sunxi_wdt` | `S90watchdog` | the watchdog has to be openable before the app arms it |
 | `/data` = the partition labelled `DATA` from p4 up, created with `sfdisk`/`mkfs.ext4` on a card that has none | `S01data` | the session and the settings live there, and the boot gate re-execs a binary from it |
 | the opt-in debug shell: `getty` on the UART, on tty1, or on a CDC-ACM gadget the program itself creates through configfs | `S02console` | the USB console exists only while a userspace program makes it. Booting as init without this step would take the console away exactly when a change to the boot path is being tested; it is off unless `console=` in `wat.txt` says otherwise, and it is the one place where the init path still starts busybox |
 

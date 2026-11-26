@@ -1,7 +1,8 @@
 # Publishing a release with board images
 
 How to publish a GitHub release that a device can update itself from, including
-the OS images for the **BeagleBone Black** and the **Raspberry Pi 2**.
+the OS images for the **BeagleBone Black**, the **Cubieboard 1**, the
+**Raspberry Pi 1** and the **Raspberry Pi 2**.
 `docs/ARCHITECTURE.md` §11 explains the mechanisms (D17 binary updates, D18 two
 root slots, M11 install); this file is the procedure, in the order that works.
 
@@ -24,9 +25,9 @@ here was learned the hard way and is not in one command.
 4. It verifies the download's `sha256` and `size`, writes the image into the
    *inactive* root slot, reads it back, switches the boot file and reboots. A
    new slot that does not come up three times is abandoned for the old one.
-5. `<board>` comes from the device's `/etc/wat/image.json` (`beagle` or
-   `rpi2`), and the manifest entry must carry the layout the device can take
-   (`layout: 2` today: `p1` boot, `p2` root A, `p3` root B, `p4` DATA).
+5. `<board>` comes from the device's `/etc/wat/image.json` (`beagle`, `cubie`,
+   `rpi1` or `rpi2`), and the manifest entry must carry the layout the device
+   can take (`layout: 2` today: `p1` boot, `p2` root A, `p3` root B, `p4` DATA).
 
 Consequence: **a private repository cannot be used for this.** Its release
 assets answer 404 to an unauthenticated client, which is what the device is.
@@ -65,6 +66,8 @@ rejects the download.
 
 ```sh
 make -C os bbb      # -> os/_output/bbb/images/sdcard.img
+make -C os cubie    # -> os/_output/cubie/images/sdcard.img
+make -C os rpi1     # -> os/_output/rpi1/images/sdcard.img
 make -C os rpi2     # -> os/_output/rpi2/images/sdcard.img
 ```
 
@@ -79,7 +82,7 @@ Check the version inside the image before publishing (the file name tells you
 nothing):
 
 ```sh
-for b in bbb rpi2; do
+for b in bbb cubie rpi1 rpi2; do
   debugfs -R "dump /usr/bin/wa-transcriber /tmp/imgbin-$b" \
           os/_output/$b/images/rootfs.ext2 2>/dev/null
   printf '%-5s ' "$b"
@@ -92,8 +95,8 @@ Expect exactly the tag, e.g. `v0.2.0`.
 
 ## 3. Stage the images under the names the manifest expects
 
-`tools/wat-manifest` has a fixed table — `beagle.img`, `rpi1.img` and
-`rpi2.img` — and
+`tools/wat-manifest` has a fixed table — `beagle.img`, `cubie.img`, `rpi1.img`
+and `rpi2.img` — and
 skips a file that does not exist (a missing board is simply absent from the
 manifest, not an error). Copy, never rename in place:
 
@@ -104,9 +107,10 @@ mkdir -p /tmp/rel/dist /tmp/rel/images
 gh release download v0.2.0 --repo emdioh/wa-transcriber \
     --pattern 'wa-transcriber-linux-*' --dir /tmp/rel/dist --clobber
 
-cp os/_output/bbb/images/sdcard.img  /tmp/rel/images/beagle.img
-cp os/_output/rpi1/images/sdcard.img /tmp/rel/images/rpi1.img
-cp os/_output/rpi2/images/sdcard.img /tmp/rel/images/rpi2.img
+cp os/_output/bbb/images/sdcard.img   /tmp/rel/images/beagle.img
+cp os/_output/cubie/images/sdcard.img /tmp/rel/images/cubie.img
+cp os/_output/rpi1/images/sdcard.img  /tmp/rel/images/rpi1.img
+cp os/_output/rpi2/images/sdcard.img  /tmp/rel/images/rpi2.img
 ```
 
 ## 4. Generate the manifest with the images block
@@ -136,7 +140,8 @@ Expect `released_at` plus the `images` block, nothing else.
 
 ```sh
 gh release upload v0.2.0 --repo emdioh/wa-transcriber --clobber \
-    /tmp/rel/images/beagle.img /tmp/rel/images/rpi1.img /tmp/rel/images/rpi2.img \
+    /tmp/rel/images/beagle.img /tmp/rel/images/cubie.img \
+    /tmp/rel/images/rpi1.img /tmp/rel/images/rpi2.img \
     /tmp/rel/manifest.json
 ```
 
@@ -235,7 +240,7 @@ EOF
 - A release that turns out wrong is retired by publishing a **higher** version;
   deleting a tag/release leaves devices with whatever they downloaded, and a
   device that already switched slots keeps running it.
-- The three images are the *same layout* but not the same bytes; the
+- The four images are the *same layout* but not the same bytes; the
   manifest keys them by board, not by architecture. `rpi1.img` is the odd one
   out: it carries the **armv6** binary, because a Pi 1/Zero is an ARM1176.
 

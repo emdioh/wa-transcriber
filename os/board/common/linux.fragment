@@ -23,6 +23,7 @@ CONFIG_MT76x2U=m
 # supported ones. Firmware: BR2_PACKAGE_LINUX_FIRMWARE_RTL_81XX.
 CONFIG_RTL8XXXU=m
 
-# Watchdogs: Raspberry Pi (bcm2835) and BeagleBone Black (omap).
+# Watchdogs: Raspberry Pi (bcm2835), BeagleBone Black (omap) and Cubieboard (sunxi).
 CONFIG_BCM2835_WDT=m
 CONFIG_OMAP_WDT=m
+CONFIG_SUNXI_WDT=m

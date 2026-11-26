@@ -66,9 +66,9 @@ func initFallback(log *slog.Logger, cause error) {
 }
 
 // watchdogModules are tried in order: the driver differs per board (BCM2835
-// for the Raspberry Pies, OMAP for the BeagleBone) and only the first one
-// that loads matters.
-var watchdogModules = []string{"bcm2835_wdt", "omap_wdt"}
+// for the Raspberry Pies, OMAP for the BeagleBone, sunxi for the Cubieboard)
+// and only the first one that loads matters.
+var watchdogModules = []string{"bcm2835_wdt", "omap_wdt", "sunxi_wdt"}
 
 // readKernelCmdline returns the kernel command line ("" when unreadable).
 func readKernelCmdline() string {

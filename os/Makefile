@@ -3,8 +3,10 @@
 # Buildroot itself is downloaded and pinned here (not a submodule, not
 # vendored) so a clean checkout needs one command per board:
 #
+#	make -C os rpi1     -> os/_output/rpi1/images/sdcard.img
 #	make -C os rpi2     -> os/_output/rpi2/images/sdcard.img
 #	make -C os bbb      -> os/_output/bbb/images/sdcard.img
+#	make -C os cubie    -> os/_output/cubie/images/sdcard.img
 #
 # The transcriber binary is cross-compiled by the Go toolchain first (see
 # "prebuilt" below) and then only copied into the target filesystem; Go is
@@ -25,14 +27,15 @@ GO_DIST_armv6     := $(CURDIR)/../dist/wa-transcriber-linux-armv6
 
 JOBS ?= $(shell nproc 2>/dev/null || echo 2)
 
-# One output directory per board, so both can be built from the same tree.
-OUT_rpi1 := $(CURDIR)/_output/rpi1
-OUT_rpi2 := $(CURDIR)/_output/rpi2
-OUT_bbb  := $(CURDIR)/_output/bbb
+# One output directory per board, so all can be built from the same tree.
+OUT_rpi1  := $(CURDIR)/_output/rpi1
+OUT_rpi2  := $(CURDIR)/_output/rpi2
+OUT_bbb   := $(CURDIR)/_output/bbb
+OUT_cubie := $(CURDIR)/_output/cubie
 
-.PHONY: all rpi1 rpi2 bbb prebuilt buildroot check clean distclean download menuconfig-rpi1 menuconfig-rpi2 menuconfig-bbb
+.PHONY: all rpi1 rpi2 bbb cubie prebuilt buildroot check clean distclean download menuconfig-rpi1 menuconfig-rpi2 menuconfig-bbb menuconfig-cubie
 
-all: check rpi1 rpi2 bbb
+all: check rpi1 rpi2 bbb cubie
 
 # --- the binary ------------------------------------------------------------
 
@@ -96,6 +99,12 @@ bbb: check buildroot prebuilt
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_bbb) BR2_EXTERNAL=$(BR2_EXTERNAL) -j$(JOBS)
 	sh $(CURDIR)/mkimage.sh bbb $(OUT_bbb)
 
+cubie: check buildroot prebuilt
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_cubie) BR2_EXTERNAL=$(BR2_EXTERNAL) wat_cubie_defconfig
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_cubie) BR2_EXTERNAL=$(BR2_EXTERNAL) wa-transcriber-dirclean
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_cubie) BR2_EXTERNAL=$(BR2_EXTERNAL) -j$(JOBS)
+	sh $(CURDIR)/mkimage.sh cubie $(OUT_cubie)
+
 # The SD card image is assembled by mkimage.sh from the files Buildroot
 # produced in $(OUT)/images, so the partition layout stays in this tree
 # instead of in a Buildroot post-image hook.
@@ -109,13 +118,16 @@ menuconfig-rpi2: buildroot
 menuconfig-bbb: buildroot
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_bbb) BR2_EXTERNAL=$(BR2_EXTERNAL) menuconfig
 
+menuconfig-cubie: buildroot
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_cubie) BR2_EXTERNAL=$(BR2_EXTERNAL) menuconfig
+
 # --- checks ----------------------------------------------------------------
 
 check:
 	@sh $(CURDIR)/check.sh
 
 clean:
-	rm -rf $(OUT_rpi2) $(OUT_bbb) $(OUT_rpi1)
+	rm -rf $(OUT_rpi2) $(OUT_bbb) $(OUT_rpi1) $(OUT_cubie)
 
 distclean: clean
-	rm -rf $(BUILDROOT_ROOT) $(OUT_rpi2) $(OUT_bbb) $(OUT_rpi1) prebuilt
+	rm -rf $(BUILDROOT_ROOT) $(OUT_rpi2) $(OUT_bbb) $(OUT_rpi1) $(OUT_cubie) prebuilt

@@ -41,10 +41,10 @@ type Manifest struct {
 	MinFrom string           `json:"min_from"`
 	Assets  map[string]Asset `json:"assets"`
 	// Images is the optional board-image block of M10 (D18): one entry per
-	// board, keyed "beagle" and "rpi2". It is absent in every release before
-	// the two-root layout, which is exactly how an old device knows there is
-	// no image to install. The same signature covers it, so a device checks
-	// the whole manifest before looking at an image.
+	// board, keyed "beagle", "cubie", "rpi1" and "rpi2". It is absent in every
+	// release before the two-root layout, which is exactly how an old device
+	// knows there is no image to install. The same signature covers it, so a
+	// device checks the whole manifest before looking at an image.
 	Images map[string]Image `json:"images,omitempty"`
 }
 
@@ -59,8 +59,8 @@ type Image struct {
 }
 
 // ImageKeys are the boards an image may be published for. They are not
-// runtime.GOARCH: the same armv7 binary runs on both boards.
-var ImageKeys = []string{"beagle", "rpi2"}
+// runtime.GOARCH: the same armv7 binary runs on BeagleBone, Cubieboard and Pi 2.
+var ImageKeys = []string{"beagle", "cubie", "rpi1", "rpi2"}
 
 // ErrNoManifest is returned by Checker.Latest when there is no verified
 // manifest yet (no check has succeeded and the cache is empty or stale).
