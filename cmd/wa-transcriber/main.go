@@ -158,9 +158,11 @@ func run() error {
 	if asInit {
 		// One table for every child process: as init, a daemonised
 		// wpa_supplicant is reparented to us and nothing else would reap it.
-		proc.SetDefault(proc.New(func(format string, args ...any) {
+		// Attach the logger to the existing default table rather than
+		// replacing it, so console gettys started in boot.Setup stay tracked.
+		proc.SetLogger(func(format string, args ...any) {
 			log.Info(fmt.Sprintf(format, args...))
-		}))
+		})
 	}
 	log.Info("starting", "version", version, "data", *dataDir, "listen", *listen,
 		"mem_total_mb", memTotal>>20, "mem_limit_mb", memoryLimitMB(),

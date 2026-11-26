@@ -3,10 +3,13 @@ package proc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -152,6 +155,142 @@ func TestRunReportsExitStatus(t *testing.T) {
 	out, err := CombinedOutput(exec.Command("/bin/sh", "-c", "echo hi"))
 	if err != nil || string(out) != "hi\n" {
 		t.Fatalf("CombinedOutput = %q, %v", out, err)
+	}
+}
+
+// TestSetLoggerPreservesTracked mirrors init mode: boot.Setup starts console
+// gettys on the default table before main attaches its slog logger. Attaching
+// the logger must not drop already-tracked pids.
+func TestSetLoggerPreservesTracked(t *testing.T) {
+	prev := Default()
+	SetDefault(New(nil))
+	t.Cleanup(func() { SetDefault(prev) })
+
+	cmd := exec.Command("/bin/sh", "-c", "exit 9")
+	if err := Start(cmd); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	pid := cmd.Process.Pid
+	waitZombie(t, pid)
+
+	var mu sync.Mutex
+	var lines []string
+	SetLogger(func(format string, args ...any) {
+		mu.Lock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	})
+
+	if n := Default().Reap("/proc"); n != 0 {
+		t.Fatalf("Reap after SetLogger took %d tracked children", n)
+	}
+	err := Wait(cmd)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 9 {
+		t.Fatalf("Wait = %v, want exit status 9", err)
+	}
+	if Default().Count() != 0 {
+		t.Fatalf("default table still holds %d pids after Wait", Default().Count())
+	}
+	mu.Lock()
+	gotLines := append([]string(nil), lines...)
+	mu.Unlock()
+	if len(gotLines) != 0 {
+		t.Fatalf("unexpected log lines for tracked child: %v", gotLines)
+	}
+}
+
+func TestConcurrentStartWaitReapSetLogger(t *testing.T) {
+	tbl := New(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var bg sync.WaitGroup
+	bg.Add(2)
+	go func() {
+		defer bg.Done()
+		for ctx.Err() == nil {
+			tbl.SetLogger(func(format string, args ...any) {
+				_ = fmt.Sprintf(format, args...)
+			})
+			tbl.SetLogger(nil)
+		}
+	}()
+	go func() {
+		defer bg.Done()
+		for ctx.Err() == nil {
+			tbl.Reap("/proc")
+		}
+	}()
+
+	const workers = 4
+	const perWorker = 10
+	var wg sync.WaitGroup
+	errs := make(chan error, workers*perWorker)
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range perWorker {
+				cmd := exec.Command("/bin/sh", "-c", "exit 5")
+				if err := tbl.Start(cmd); err != nil {
+					errs <- fmt.Errorf("Start: %w", err)
+					return
+				}
+				err := tbl.Wait(cmd)
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 5 {
+					errs <- fmt.Errorf("Wait = %v, want exit status 5", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	cancel()
+	bg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	if got := tbl.Count(); got != 0 {
+		t.Fatalf("table still holds %d pids", got)
+	}
+}
+
+func TestReapLogsFormattedMessage(t *testing.T) {
+	tbl := New(nil)
+	var mu sync.Mutex
+	var lines []string
+	tbl.SetLogger(func(format string, args ...any) {
+		mu.Lock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	})
+
+	cmd := exec.Command("/bin/sh", "-c", "exit 42")
+	if err := cmd.Start(); err != nil { // deliberately untracked
+		t.Fatalf("Start: %v", err)
+	}
+	pid := cmd.Process.Pid
+	defer func() { _ = cmd.Wait() }()
+	waitZombie(t, pid)
+
+	if n := tbl.Reap("/proc"); n != 1 {
+		t.Fatalf("Reap = %d, want 1", n)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) != 1 {
+		t.Fatalf("got %d log lines, want 1: %v", len(lines), lines)
+	}
+	if strings.Contains(lines[0], "%!(") {
+		t.Fatalf("log line has fmt formatting error: %q", lines[0])
+	}
+	want := fmt.Sprintf("reaped a child that nobody waited for pid=%d exit=42", pid)
+	if lines[0] != want {
+		t.Fatalf("log line = %q, want %q", lines[0], want)
 	}
 }
 

@@ -31,35 +31,71 @@ import (
 
 // Table is the set of child processes the program started itself.
 type Table struct {
+	startMu sync.RWMutex
 	mu      sync.Mutex
 	started map[int]struct{}
 	logf    func(string, ...any)
 }
 
-// New returns an empty table. logf may be nil; it receives one line per
-// child that was reaped without its own waiter.
+// New returns an empty table. logf may be nil; it is called printf-style with
+// one line per child that was reaped without its own waiter.
 func New(logf func(string, ...any)) *Table {
+	t := &Table{started: make(map[int]struct{})}
+	t.SetLogger(logf)
+	return t
+}
+
+// SetLogger installs a printf-style logger on t without disturbing children
+// that are already tracked. A nil logf disables logging.
+func (t *Table) SetLogger(logf func(string, ...any)) {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	return &Table{started: make(map[int]struct{}), logf: logf}
+	t.mu.Lock()
+	t.logf = logf
+	t.mu.Unlock()
+}
+
+func (t *Table) printf(format string, args ...any) {
+	t.mu.Lock()
+	logf := t.logf
+	t.mu.Unlock()
+	logf(format, args...)
 }
 
 // defaultTable is what the package-level helpers use.
-var defaultTable = New(nil)
+var (
+	defaultMu    sync.RWMutex
+	defaultTable = New(nil)
+)
 
 // Default is the table the package-level helpers use.
-func Default() *Table { return defaultTable }
-
-// SetDefault replaces it (main installs a table with a logger).
-func SetDefault(t *Table) {
-	if t != nil {
-		defaultTable = t
-	}
+func Default() *Table {
+	defaultMu.RLock()
+	defer defaultMu.RUnlock()
+	return defaultTable
 }
+
+// SetDefault replaces the default table (mainly for tests). Production callers
+// that only want to attach a logger should use SetLogger so already-started
+// children stay tracked.
+func SetDefault(t *Table) {
+	if t == nil {
+		return
+	}
+	defaultMu.Lock()
+	defaultTable = t
+	defaultMu.Unlock()
+}
+
+// SetLogger installs a printf-style logger on the default table without
+// replacing it, so children started earlier stay tracked.
+func SetLogger(logf func(string, ...any)) { Default().SetLogger(logf) }
 
 // Start runs cmd and records the child, so the sweep leaves it alone.
 func (t *Table) Start(cmd *exec.Cmd) error {
+	t.startMu.RLock()
+	defer t.startMu.RUnlock()
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -149,17 +185,21 @@ func (t *Table) Reap(procDir string) int {
 			continue
 		}
 		// Started by us: os/exec owns the status, and taking it here would
-		// make that Wait fail.
+		// make that Wait fail. Hold startMu so an in-flight Start records its
+		// pid before we check and reap.
+		t.startMu.Lock()
 		if t.tracked(pid) {
+			t.startMu.Unlock()
 			continue
 		}
 		var ws syscall.WaitStatus
 		got, err := syscall.Wait4(pid, &ws, syscall.WNOHANG, nil)
+		t.startMu.Unlock()
 		if err != nil || got != pid {
 			continue
 		}
 		reaped++
-		t.logf("reaped a child that nobody waited for", "pid", pid, "exit", ws.ExitStatus())
+		t.printf("reaped a child that nobody waited for pid=%d exit=%d", pid, ws.ExitStatus())
 	}
 	return reaped
 }
@@ -211,16 +251,16 @@ func readStat(path string) (byte, int, error) {
 }
 
 // Package-level helpers for the callers that do not need a table of their own.
-// They use the default table, which main replaces with a logging one.
+// They use the default table, to which main attaches a logger via SetLogger.
 
 // Start runs cmd and records the child in the default table.
-func Start(cmd *exec.Cmd) error { return defaultTable.Start(cmd) }
+func Start(cmd *exec.Cmd) error { return Default().Start(cmd) }
 
 // Wait waits for cmd in the default table.
-func Wait(cmd *exec.Cmd) error { return defaultTable.Wait(cmd) }
+func Wait(cmd *exec.Cmd) error { return Default().Wait(cmd) }
 
 // Run starts and waits for cmd in the default table.
-func Run(cmd *exec.Cmd) error { return defaultTable.Run(cmd) }
+func Run(cmd *exec.Cmd) error { return Default().Run(cmd) }
 
 // CombinedOutput is (*exec.Cmd).CombinedOutput through the default table.
-func CombinedOutput(cmd *exec.Cmd) ([]byte, error) { return defaultTable.CombinedOutput(cmd) }
+func CombinedOutput(cmd *exec.Cmd) ([]byte, error) { return Default().CombinedOutput(cmd) }
