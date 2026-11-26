@@ -32,7 +32,7 @@ var initDefaults = map[string]string{
 // initPath is the PATH the kernel does not give init: it passes a private
 // environment with HOME and TERM and nothing else, and every helper the boot
 // path and the network manager run (getty, modprobe, sfdisk, partx, mkfs.ext4,
-// e2fsck, ntpd, udhcpc, wpa_supplicant) lives in one of these directories.
+// e2fsck, udhcpc, wpa_supplicant) lives in one of these directories.
 // Without it every exec by bare name fails with "executable file not found".
 const initPath = "/sbin:/usr/sbin:/bin:/usr/bin"
 

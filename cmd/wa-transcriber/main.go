@@ -28,6 +28,7 @@ import (
 	"github.com/emdioh/wa-transcriber/internal/logbuf"
 	"github.com/emdioh/wa-transcriber/internal/netmgr"
 	"github.com/emdioh/wa-transcriber/internal/proc"
+	"github.com/emdioh/wa-transcriber/internal/sntp"
 	"github.com/emdioh/wa-transcriber/internal/status"
 	"github.com/emdioh/wa-transcriber/internal/transcribe"
 	"github.com/emdioh/wa-transcriber/internal/wa"
@@ -401,8 +402,9 @@ func run() error {
 			Log:      log,
 		})
 		if asInit {
-			// No inittab, so the time daemon S40ntpd used to start is ours.
-			startNTP(ctx, log)
+			// No inittab, so we keep the clock synchronised in-process instead
+			// of spawning busybox ntpd (D19).
+			go sntp.Run(ctx, sntp.Options{Log: log})
 		}
 		if !netmgr.WaitClock(ctx, netmgr.ClockCheck{
 			Managed:   managed,
