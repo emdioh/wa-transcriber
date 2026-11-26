@@ -132,7 +132,16 @@ func (o Options) serialDevice() (string, error) {
 
 // spawn runs a getty on tty in a respawn loop, like an init would: a login
 // that ends, or a tty that is not ready yet, gets a new one a second later.
+//
+// After a PID 1 re-exec (!reset or binary self-update), the getty or login
+// started by the previous execution is still alive on tty; spawning a second
+// one would fight over the same port, so spawn skips it when o.ProcDir already
+// shows one running.
 func (o Options) spawn(ctx context.Context, tty string) {
+	if o.consoleRunning(tty) {
+		o.Log.Info("console login already running, keeping it", "tty", tty)
+		return
+	}
 	if o.Spawn != nil {
 		o.Spawn(tty)
 		return
@@ -201,12 +210,20 @@ func (o Options) usbACM(ctx context.Context) error {
 			return fmt.Errorf("boot: usb gadget function link: %w", err)
 		}
 	}
-	udc, err := o.firstUDC()
-	if err != nil {
-		return err
+	udcPath := filepath.Join(g, "UDC")
+	udc := ""
+	if cur, err := os.ReadFile(udcPath); err == nil {
+		udc = strings.TrimSpace(string(cur))
 	}
-	if err := os.WriteFile(filepath.Join(g, "UDC"), []byte(udc), 0o644); err != nil {
-		return fmt.Errorf("boot: usb gadget UDC: %w", err)
+	if udc == "" {
+		var err error
+		udc, err = o.firstUDC()
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(udcPath, []byte(udc), 0o644); err != nil {
+			return fmt.Errorf("boot: usb gadget UDC: %w", err)
+		}
 	}
 	deadline := time.Now().Add(o.Wait)
 	for {
@@ -231,4 +248,82 @@ func (o Options) firstUDC() (string, error) {
 		return e.Name(), nil
 	}
 	return "", fmt.Errorf("boot: no USB device controller, is the port in peripheral mode?")
+}
+
+// consoleRunning reports whether a getty or login process is already running on
+// tty by scanning o.ProcDir. If o.ProcDir is empty or unreadable, it returns
+// false so spawn proceeds normally.
+func (o Options) consoleRunning(tty string) bool {
+	if o.ProcDir == "" {
+		return false
+	}
+	ents, err := os.ReadDir(o.ProcDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range ents {
+		if !e.IsDir() || !isNumeric(e.Name()) {
+			continue
+		}
+		pidDir := filepath.Join(o.ProcDir, e.Name())
+		raw, err := os.ReadFile(filepath.Join(pidDir, "cmdline"))
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+		prog, rest := cmdlineProgram(args)
+		switch prog {
+		case "getty":
+			for _, arg := range rest {
+				if matchesTTY(arg, o.DevDir, tty) {
+					return true
+				}
+			}
+		case "login":
+			for _, arg := range rest {
+				if matchesTTY(arg, o.DevDir, tty) {
+					return true
+				}
+			}
+			if target, err := os.Readlink(filepath.Join(pidDir, "fd", "0")); err == nil && matchesTTY(target, o.DevDir, tty) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func cmdlineProgram(args []string) (string, []string) {
+	if len(args) == 0 || args[0] == "" {
+		return "", nil
+	}
+	prog := filepath.Base(args[0])
+	rest := args[1:]
+	if prog == "busybox" && len(rest) > 0 {
+		prog = filepath.Base(rest[0])
+		rest = rest[1:]
+	}
+	return prog, rest
+}
+
+func matchesTTY(arg, devDir, tty string) bool {
+	if arg == tty || arg == "/dev/"+tty {
+		return true
+	}
+	if devDir != "" && arg == filepath.Join(devDir, tty) {
+		return true
+	}
+	return false
 }
