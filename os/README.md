@@ -34,8 +34,9 @@ process and the board reboots within ~20 s: that is the recovery path.
 
 ## Init mode
 
-The BeagleBone Black image boots the transcriber as the machine's init
-(`init=/usr/bin/wa-transcriber` in `boot/extlinux/extlinux.conf`), so the
+All three board images boot the transcriber as the machine's init
+(`init=/usr/bin/wa-transcriber` in `extlinux/extlinux.conf` on the BeagleBone
+Black and in `cmdline.txt` on the Raspberry Pi 1 and 2), so the
 kernel execs it directly and `/etc/inittab`, `rcS` and every script in
 `rootfs-overlay/etc/init.d` are skipped. `internal/boot` does what they did —
 mounts, hostname, watchdog module, `/boot`, `/data` — and
@@ -51,10 +52,9 @@ append root=/dev/mmcblk0p2 ro rootwait ... init=/usr/bin/wa-transcriber wat.netw
 ```
 
 **Rollback without a reflash:** mount the boot partition on any machine and
-delete the `init=` token. The kernel then starts busybox init again and the old
-script path runs, exactly as before D19. The other boards still boot that way
-(the Raspberry Pi images need their own first-boot story for `/data` before
-`cmdline.txt` gets the token).
+delete the `init=` token from `extlinux/extlinux.conf` or `cmdline.txt`. The
+kernel then starts busybox init again and the old script path runs, exactly as
+before D19.
 
 ## Debug console
 

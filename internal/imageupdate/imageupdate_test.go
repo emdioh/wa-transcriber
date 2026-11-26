@@ -617,3 +617,59 @@ func TestStatusOnOldLayout(t *testing.T) {
 		t.Fatalf("an old layout reports ready: %+v", st)
 	}
 }
+
+func TestCmdlineSwitchPreservesInit(t *testing.T) {
+	const rpiCmdline = "root=/dev/mmcblk0p2 rootfstype=ext4 ro rootwait console=tty1 console=ttyAMA0,115200 init=/usr/bin/wa-transcriber wat.network=none wat.listen=:8080\n"
+
+	// Direct replaceRoot round-trip: p2 -> p3 -> p2 keeps init=, wat.* flags,
+	// and the single-line layout required by Raspberry Pi firmware.
+	toB, err := replaceRoot([]byte(rpiCmdline), "/dev/mmcblk0p2", "/dev/mmcblk0p3")
+	if err != nil {
+		t.Fatalf("replaceRoot p2->p3: %v", err)
+	}
+	wantB := strings.Replace(rpiCmdline, "root=/dev/mmcblk0p2", "root=/dev/mmcblk0p3", 1)
+	if string(toB) != wantB {
+		t.Fatalf("p2->p3:\n got %q\nwant %q", toB, wantB)
+	}
+	if strings.Count(string(toB), "\n") != 1 {
+		t.Fatalf("cmdline.txt stopped being a single line: %q", toB)
+	}
+	backA, err := replaceRoot(toB, "/dev/mmcblk0p3", "/dev/mmcblk0p2")
+	if err != nil {
+		t.Fatalf("replaceRoot p3->p2: %v", err)
+	}
+	if string(backA) != rpiCmdline {
+		t.Fatalf("p3->p2 round-trip drifted:\n got %q\nwant %q", backA, rpiCmdline)
+	}
+
+	// End-to-end Switch and Rollback against a Pi cmdline.txt boot file.
+	d := newFakeDevice(t)
+	d.layout.BootFile = filepath.Join(d.layout.BootDir, "cmdline.txt")
+	if err := os.WriteFile(d.layout.BootFile, []byte(rpiCmdline), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body, sum := image(1024)
+	if _, err := d.service().Install(context.Background(), bytes.NewReader(body), int64(len(body)), sum); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if err := d.service().Switch("v1.3.0"); err != nil {
+		t.Fatalf("Switch: %v", err)
+	}
+	if got := d.bootFile(); got != wantB {
+		t.Fatalf("cmdline.txt after Switch:\n got %q\nwant %q", got, wantB)
+	}
+	if got := bootRoot(d.layout.BootFile); got != "/dev/mmcblk0p3" {
+		t.Fatalf("bootRoot after Switch = %q, want /dev/mmcblk0p3", got)
+	}
+
+	// Boot into B and roll back to A.
+	d.root = "mmcblk0p3"
+	d.layout.Root = d.part("mmcblk0p3")
+	d.writeSys()
+	if err := d.service().Rollback(); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if got := d.bootFile(); got != rpiCmdline {
+		t.Fatalf("cmdline.txt after Rollback:\n got %q\nwant %q", got, rpiCmdline)
+	}
+}

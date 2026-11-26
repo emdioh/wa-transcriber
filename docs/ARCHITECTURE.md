@@ -538,10 +538,12 @@ busybox init and letting `/etc/inittab` respawn it. The bootloader says so:
 append root=/dev/mmcblk0p2 … init=/usr/bin/wa-transcriber
 ```
 
-The BeagleBone Black's `extlinux.conf` ships that token; the Raspberry Pis do
-not yet (`cmdline.txt` needs its own first-boot story for `/data`, see the
-bead). Everything the old boot path did in shell is done by `internal/boot`
-before the rest of the program starts, in this order:
+All three board images ship that token — the BeagleBone Black in
+`extlinux.conf` and the Raspberry Pi 1 and 2 in `cmdline.txt` — with the same
+rollback on every board: mount the boot partition and remove `init=` from
+`extlinux.conf` or `cmdline.txt` to fall back to busybox init. Everything the
+old boot path did in shell is done by `internal/boot` before the rest of the
+program starts, in this order:
 
 | Step | Was | Why the order |
 |---|---|---|

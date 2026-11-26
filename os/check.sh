@@ -169,11 +169,13 @@ for board in bbb:beagle:/boot/extlinux/extlinux.conf rpi1:rpi1:/boot/cmdline.txt
 done
 grep -q 'sysinit:/etc/init.d/rcS' "$OVL/etc/inittab" ||
 	fail "inittab does not run rcS"
-# Init mode (D19): the BeagleBone boots the transcriber as init, so the
-# settings inittab carries above have to exist as its defaults, and the boot
-# line has to name it.
-grep -q 'init=/usr/bin/wa-transcriber' "$HERE/board/bbb/extlinux.conf" ||
-	fail "board/bbb/extlinux.conf does not start the transcriber as init (D19)"
+# Init mode (D19): every board boots the transcriber as init, so the settings
+# inittab carries above have to exist as its defaults, and each boot file has
+# to name it.
+for f in board/bbb/extlinux.conf board/rpi1/cmdline.txt board/rpi2/cmdline.txt; do
+	grep -q 'init=/usr/bin/wa-transcriber' "$HERE/$f" ||
+		fail "$f does not start the transcriber as init (D19)"
+done
 INITMODE="$HERE/../cmd/wa-transcriber/initmode.go"
 for setting in 'data=boot.DataDir' 'listen=":80"' 'network="managed"' \
 	'watchdog="/dev/watchdog"' 'update-dir="/data/bin"' \
@@ -360,6 +362,9 @@ grep -q 'earlycon=' "$HERE/board/bbb/extlinux.conf" ||
 grep -q 'quiet' "$HERE/board/bbb/extlinux.conf" &&
 	fail "bbb/extlinux.conf still passes quiet: the boot log is how we debug"
 for board in rpi1 rpi2; do
+	# Raspberry Pi firmware reads only the first line of cmdline.txt.
+	[ "$(wc -l < "$HERE/board/$board/cmdline.txt")" -eq 1 ] ||
+		fail "$board/cmdline.txt must be a single line"
 	grep -q 'console=tty1' "$HERE/board/$board/cmdline.txt" ||
 		fail "$board/cmdline.txt must keep console=tty1 (HDMI)"
 	# gpu_mem=16 makes bootcode.bin load start_cd.elf + fixup_cd.dat instead of
