@@ -5,6 +5,8 @@
 # screen and nothing else. arm_64bit=0 is the supported way to say "32-bit".
 kernel=zImage
 arm_64bit=0
+# gpu_mem=16 makes bootcode.bin load the cut-down firmware (start_cd.elf and
+# fixup_cd.dat); both must stay in wat_rpi2_defconfig and genimage.cfg.
 gpu_mem=16
 disable_overscan=1
 dtparam=audio=off

@@ -1,6 +1,8 @@
 # Raspberry Pi 1 / Zero boot configuration (boot partition, p1 of the card).
 # BCM2835, ARM1176: no arm_64bit, no arm_control.
 kernel=zImage
+# gpu_mem=16 makes bootcode.bin load the cut-down firmware (start_cd.elf and
+# fixup_cd.dat); both must stay in wat_rpi1_defconfig and genimage.cfg.
 gpu_mem=16
 disable_overscan=1
 dtparam=audio=off

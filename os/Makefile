@@ -80,13 +80,13 @@ $(BUILDROOT_DIR)/.stamp-extracted: $(BUILDROOT_TARBALL)
 
 rpi1: check buildroot prebuilt
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi1) BR2_EXTERNAL=$(BR2_EXTERNAL) wat_rpi1_defconfig
-	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi1) BR2_EXTERNAL=$(BR2_EXTERNAL) wa-transcriber-dirclean
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi1) BR2_EXTERNAL=$(BR2_EXTERNAL) wa-transcriber-dirclean rpi-firmware-dirclean
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi1) BR2_EXTERNAL=$(BR2_EXTERNAL) -j$(JOBS)
 	sh $(CURDIR)/mkimage.sh rpi1 $(OUT_rpi1)
 
 rpi2: check buildroot prebuilt
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi2) BR2_EXTERNAL=$(BR2_EXTERNAL) wat_rpi2_defconfig
-	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi2) BR2_EXTERNAL=$(BR2_EXTERNAL) wa-transcriber-dirclean
+	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi2) BR2_EXTERNAL=$(BR2_EXTERNAL) wa-transcriber-dirclean rpi-firmware-dirclean
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT_rpi2) BR2_EXTERNAL=$(BR2_EXTERNAL) -j$(JOBS)
 	sh $(CURDIR)/mkimage.sh rpi2 $(OUT_rpi2)
 

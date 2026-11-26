@@ -40,10 +40,14 @@ BR2_LINUX_KERNEL_DTS_SUPPORT=y
 BR2_LINUX_KERNEL_INTREE_DTS_NAME="bcm2709-rpi-2-b bcm2710-rpi-2-b bcm2710-rpi-3-b bcm2710-rpi-3-b-plus bcm2710-rpi-cm3 bcm2710-rpi-zero-2 bcm2710-rpi-zero-2-w bcm2836-rpi-2-b bcm2837-rpi-3-a-plus bcm2837-rpi-3-b bcm2837-rpi-3-b-plus bcm2837-rpi-cm3-io3 bcm2837-rpi-zero-2-w"
 BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 
-# Boot firmware
+# Boot firmware: ship both default (start.elf) and cut-down (start_cd.elf).
+# config.txt sets gpu_mem=16, which makes bootcode.bin load start_cd.elf and
+# fixup_cd.dat instead of start.elf; without them it halts with 3 LED flashes
+# and no rainbow screen.
 BR2_PACKAGE_RPI_FIRMWARE=y
 BR2_PACKAGE_RPI_FIRMWARE_BOOTCODE_BIN=y
 BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI=y
+BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI_CD=y
 BR2_PACKAGE_RPI_FIRMWARE_CONFIG_FILE="$(BR2_EXTERNAL_WAT_PATH)/board/rpi2/config.txt"
 # BR2_PACKAGE_RPI_FIRMWARE_INSTALL_DTB_OVERLAYS is not set
 

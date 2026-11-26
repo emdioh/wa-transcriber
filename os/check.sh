@@ -335,12 +335,24 @@ grep -q 'earlycon=' "$HERE/board/bbb/extlinux.conf" ||
 	fail "bbb/extlinux.conf has no earlycon: nothing prints before the UART driver loads"
 grep -q 'quiet' "$HERE/board/bbb/extlinux.conf" &&
 	fail "bbb/extlinux.conf still passes quiet: the boot log is how we debug"
-grep -q 'console=tty1' "$HERE/board/rpi2/cmdline.txt" ||
-	fail "rpi2/cmdline.txt must keep console=tty1 (HDMI)"
-# First boot is root A = p2 on both boards, by device path (D18): a UUID
+for board in rpi1 rpi2; do
+	grep -q 'console=tty1' "$HERE/board/$board/cmdline.txt" ||
+		fail "$board/cmdline.txt must keep console=tty1 (HDMI)"
+	# gpu_mem=16 makes bootcode.bin load start_cd.elf + fixup_cd.dat instead of
+	# start.elf; missing them stalls the Pi with 3 LED flashes and no rainbow.
+	if grep -q '^gpu_mem=16$' "$HERE/board/$board/config.txt"; then
+		grep -q '^BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI_CD=y$' "$HERE/configs/wat_${board}_defconfig" ||
+			fail "$board: gpu_mem=16 requires BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI_CD=y in wat_${board}_defconfig"
+		for fw in start_cd.elf fixup_cd.dat; do
+			grep -q "\"rpi-firmware/$fw\"" "$HERE/board/$board/genimage.cfg" ||
+				fail "$board: gpu_mem=16 requires rpi-firmware/$fw in genimage.cfg"
+		done
+	fi
+done
+# First boot is root A = p2 on all boards, by device path (D18): a UUID
 # would have to be rewritten by every image update, and the running system
 # works out the other slot from its own block device.
-for f in "$HERE/board/bbb/extlinux.conf" "$HERE/board/rpi2/cmdline.txt"; do
+for f in "$HERE/board/bbb/extlinux.conf" "$HERE/board/rpi1/cmdline.txt" "$HERE/board/rpi2/cmdline.txt"; do
 	grep -q 'root=/dev/mmcblk0p2' "$f" ||
 		fail "$f must boot /dev/mmcblk0p2 (root A)"
 	if grep -q 'root=UUID=\|root=LABEL=' "$f"; then
