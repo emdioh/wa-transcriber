@@ -6,10 +6,67 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/emdioh/wa-transcriber/internal/netmgr/dhcpc"
+	"github.com/emdioh/wa-transcriber/internal/netmgr/netops"
 )
+
+// DHCPFunc obtains an IPv4 DHCP lease on ifname within timeout and, on success,
+// starts background lease renewal stopped by the returned stop function.
+// Stopping renewal must never release or remove the interface's address (D16).
+type DHCPFunc func(ctx context.Context, ifname string, mac net.HardwareAddr, timeout time.Duration) (ok bool, stop func())
+
+// applyDHCPLease configures ifname with lease without dropping an unchanged
+// primary IPv4 address (D16) and updates resolvConf when DNS servers are given.
+func applyDHCPLease(ops netops.Ops, ifname, resolvConf string, lease dhcpc.Lease) error {
+	if err := ops.AddrReplacePrimary(ifname, lease.IP, lease.PrefixLen); err != nil {
+		return err
+	}
+	if lease.Router != nil {
+		if err := ops.RouteReplaceDefault(ifname, lease.Router); err != nil {
+			return err
+		}
+	}
+	if resolvConf != "" && len(lease.DNS) > 0 {
+		if err := dhcpc.WriteResolvConf(resolvConf, lease.DNS); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// defaultDHCPFunc runs the pure-Go DHCPv4 client (dhcpc.Obtain + dhcpc.Maintain)
+// and applies acquired and renewed leases via ops.
+func defaultDHCPFunc(ops netops.Ops, resolvConf string, log *slog.Logger) DHCPFunc {
+	return func(ctx context.Context, ifname string, mac net.HardwareAddr, timeout time.Duration) (bool, func()) {
+		hostname, _ := os.Hostname()
+		opts := dhcpc.Options{
+			IfName:     ifname,
+			MAC:        mac,
+			Hostname:   hostname,
+			Timeout:    timeout,
+			ResolvConf: resolvConf,
+			Log:        log,
+			Apply: func(l dhcpc.Lease) error {
+				return applyDHCPLease(ops, ifname, resolvConf, l)
+			},
+		}
+		lease, err := dhcpc.Obtain(ctx, opts)
+		if err != nil {
+			if log != nil && ctx.Err() == nil {
+				log.Debug("dhcp: obtain failed", "iface", ifname, "err", err)
+			}
+			return false, nil
+		}
+		maintCtx, cancel := context.WithCancel(ctx)
+		go dhcpc.Maintain(maintCtx, opts, lease)
+		return true, cancel
+	}
+}
 
 // Ethernet manages one ethernet interface: on carrier up it tries DHCP and
 // falls back to an IPv4 link-local address; on carrier down it keeps the
@@ -18,7 +75,8 @@ import (
 type Ethernet struct {
 	IfName string
 	MAC    net.HardwareAddr
-	Runner Runner
+	Ops    netops.Ops
+	DHCP   DHCPFunc
 	Log    *slog.Logger
 
 	// After and RetryInterval are injectable for tests.
@@ -31,19 +89,26 @@ type Ethernet struct {
 	// would both kill sockets and drop a lease that is not really gone.
 	LinkDownOnCarrierLoss bool
 
-	mu     sync.Mutex
-	cancel func()
+	mu       sync.Mutex
+	gen      uint64
+	cancel   func()
+	stopDHCP func()
 }
 
-// NewEthernet returns a configured Ethernet controller.
-func NewEthernet(ifname string, mac net.HardwareAddr, run Runner, log *slog.Logger) *Ethernet {
+// NewEthernet returns a configured Ethernet controller using pure-Go netops
+// and dhcpc. If ops is nil, netops.Default() is used.
+func NewEthernet(ifname string, mac net.HardwareAddr, ops netops.Ops, log *slog.Logger) *Ethernet {
 	if log == nil {
 		log = slog.Default()
+	}
+	if ops == nil {
+		ops = netops.Default()
 	}
 	return &Ethernet{
 		IfName:        ifname,
 		MAC:           mac,
-		Runner:        run,
+		Ops:           ops,
+		DHCP:          defaultDHCPFunc(ops, dhcpc.DefaultResolvConf, log),
 		Log:           log,
 		After:         time.After,
 		DHCPTimeout:   15 * time.Second,
@@ -51,117 +116,184 @@ func NewEthernet(ifname string, mac net.HardwareAddr, run Runner, log *slog.Logg
 	}
 }
 
+func (e *Ethernet) ops() netops.Ops {
+	if e.Ops != nil {
+		return e.Ops
+	}
+	return netops.Default()
+}
+
+func (e *Ethernet) dhcpFn() DHCPFunc {
+	if e.DHCP != nil {
+		return e.DHCP
+	}
+	return defaultDHCPFunc(e.ops(), dhcpc.DefaultResolvConf, e.Log)
+}
+
+func (e *Ethernet) after(d time.Duration) <-chan time.Time {
+	if e.After != nil {
+		return e.After(d)
+	}
+	return time.After(d)
+}
+
 // Up handles a carrier-up event. It returns once the interface is up and a
 // DHCP lease or a link-local address is in place. If link-local was chosen,
 // a background loop keeps retrying DHCP and drops the link-local address when
 // a lease arrives.
 func (e *Ethernet) Up(ctx context.Context) {
-	retryCtx, cancel := context.WithCancel(ctx)
-	e.setCancel(cancel)
+	opCtx, opGen := e.beginOp(ctx)
 
-	if _, err := e.Runner.Run(ctx, "ip", "link", "set", e.IfName, "up"); err != nil {
+	if err := e.ops().LinkUp(e.IfName); err != nil {
+		e.stopOp(opGen)
 		e.Log.Error("ethernet: bring link up", "iface", e.IfName, "err", err)
 		return
 	}
-	// Our own udhcpc script (os/board/common/rootfs-overlay/usr/share/
-	// udhcpc/default.script) keeps the address across a rebind: it never
-	// deconfigures the interface and only replaces the address when it
-	// really changed, so a carrier blip does not kill live connections.
-	if e.tryDHCP(ctx) {
+	// Lease application uses AddrReplacePrimary (D16): it never flushes an
+	// unchanged address across a rebind, so a carrier blip does not kill live
+	// connections.
+	if ok, stop := e.tryDHCP(opCtx); ok {
+		e.setStopDHCP(opGen, stop)
 		e.Log.Info("ethernet: dhcp lease", "iface", e.IfName)
 		return
 	}
+	if opCtx.Err() != nil {
+		return
+	}
 
-	ip, err := e.addLinkLocal(ctx)
+	addr, err := e.addLinkLocal(opCtx)
 	if err != nil {
+		e.stopOp(opGen)
 		e.Log.Error("ethernet: link-local failed", "iface", e.IfName, "err", err)
 		return
 	}
-	e.Log.Info("ethernet: using link-local address", "iface", e.IfName, "ip", ip.String())
-	go e.retryDHCP(retryCtx, ip)
+	e.Log.Info("ethernet: using link-local address", "iface", e.IfName, "addr", addr.String())
+	go e.retryDHCP(opCtx, opGen, addr)
 }
 
-// Down handles a carrier-down event: it stops any DHCP retry loop and, by
-// default, leaves the interface and its addresses alone, so a carrier blip
-// does not tear down established connections. The retry loop of the last Up
-// is gone (the link was up), so DHCP runs again on the next carrier-up event.
-func (e *Ethernet) Down(ctx context.Context) error {
-	if c := e.takeCancel(); c != nil {
-		c()
-	}
+// Down handles a carrier-down event: it stops any DHCP retry/renewal loop and,
+// by default, leaves the interface and its addresses alone, so a carrier blip
+// does not tear down established connections.
+func (e *Ethernet) Down(_ context.Context) error {
+	e.stopAll()
 	if !e.LinkDownOnCarrierLoss {
 		e.Log.Info("ethernet: carrier down, keeping addresses", "iface", e.IfName)
 		return nil
 	}
-	_, err := e.Runner.Run(ctx, "ip", "link", "set", e.IfName, "down")
-	return err
+	return e.ops().LinkDown(e.IfName)
 }
 
 // Flush is the explicit teardown: it stops DHCP and removes every address,
 // for when the interface is handed over to another owner.
-func (e *Ethernet) Flush(ctx context.Context) error {
-	if c := e.takeCancel(); c != nil {
+func (e *Ethernet) Flush(_ context.Context) error {
+	e.stopAll()
+	return e.ops().AddrFlush(e.IfName)
+}
+
+func (e *Ethernet) beginOp(ctx context.Context) (context.Context, uint64) {
+	opCtx, cancel := context.WithCancel(ctx)
+	e.mu.Lock()
+	e.gen++
+	gen := e.gen
+	prevCancel := e.cancel
+	prevStop := e.stopDHCP
+	e.cancel = cancel
+	e.stopDHCP = nil
+	e.mu.Unlock()
+	if prevCancel != nil {
+		prevCancel()
+	}
+	if prevStop != nil {
+		prevStop()
+	}
+	return opCtx, gen
+}
+
+func (e *Ethernet) setStopDHCP(gen uint64, stop func()) {
+	if stop == nil {
+		return
+	}
+	e.mu.Lock()
+	if e.gen != gen {
+		e.mu.Unlock()
+		stop()
+		return
+	}
+	prev := e.stopDHCP
+	e.stopDHCP = stop
+	e.mu.Unlock()
+	if prev != nil {
+		prev()
+	}
+}
+
+func (e *Ethernet) stopOp(gen uint64) {
+	e.mu.Lock()
+	if e.gen != gen {
+		e.mu.Unlock()
+		return
+	}
+	c := e.cancel
+	s := e.stopDHCP
+	e.cancel = nil
+	e.stopDHCP = nil
+	e.mu.Unlock()
+	if c != nil {
 		c()
 	}
-	_, err := e.Runner.Run(ctx, "ip", "addr", "flush", "dev", e.IfName)
-	return err
+	if s != nil {
+		s()
+	}
 }
 
-func (e *Ethernet) setCancel(c func()) {
+func (e *Ethernet) stopAll() {
 	e.mu.Lock()
-	e.cancel = c
-	e.mu.Unlock()
-}
-
-func (e *Ethernet) takeCancel() func() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.gen++
 	c := e.cancel
+	s := e.stopDHCP
 	e.cancel = nil
-	return c
+	e.stopDHCP = nil
+	e.mu.Unlock()
+	if c != nil {
+		c()
+	}
+	if s != nil {
+		s()
+	}
 }
 
-// tryDHCP runs one bounded udhcpc attempt and reports whether a lease was
-// obtained.
-func (e *Ethernet) tryDHCP(ctx context.Context) bool {
-	return dhcpLease(ctx, e.Runner, e.IfName, e.DHCPTimeout)
+// tryDHCP runs one bounded DHCP attempt and reports whether a lease was
+// obtained alongside any background renewal stop function.
+func (e *Ethernet) tryDHCP(ctx context.Context) (bool, func()) {
+	return e.dhcpFn()(ctx, e.IfName, e.MAC, e.DHCPTimeout)
 }
 
-// dhcpLease runs one bounded udhcpc attempt on ifname. -n makes udhcpc exit
-// (0/1) instead of retrying in the foreground, so timeout is the outer bound
-// of the attempt. There is no release flag: -R would release the address on
-// exit (busybox: "Release IP on exit"), which tears down exactly what a
-// carrier blip must keep. Keeping the address across a rebind is the job of
-// our script, not of a client flag (see docs/ARCHITECTURE.md D16).
-func dhcpLease(ctx context.Context, r Runner, ifname string, timeout time.Duration) bool {
-	dctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	args := []string{"-n", "-i", ifname, "-f", "-q", "-t", "5", "-T", "3",
-		"-s", "/usr/share/udhcpc/default.script"}
-	_, err := r.Run(dctx, "udhcpc", args...)
-	return err == nil
-}
-
-// addLinkLocal picks a free 169.254/16 address with duplicate detection.
+// addLinkLocal picks a free 169.254/16 address with RFC 5227 ARP probing.
 func (e *Ethernet) addLinkLocal(ctx context.Context) (net.IP, error) {
+	ops := e.ops()
 	for attempt := 0; attempt < 10; attempt++ {
-		ip := linkLocalIP(e.MAC, attempt)
-		// arping -D exits 0 when the address is already in use.
-		if _, err := e.Runner.Run(ctx, "arping", "-D", "-c", "2", "-I", e.IfName, ip.String()); err == nil {
+		addr := linkLocalIP(e.MAC, attempt)
+		inUse, err := ops.ARPProbe(ctx, e.IfName, e.MAC, addr)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			e.Log.Warn("ethernet: ARP probe failed, assuming address free", "iface", e.IfName, "addr", addr.String(), "err", err)
+		} else if inUse {
 			continue
 		}
-		if _, err := e.Runner.Run(ctx, "ip", "addr", "add", ip.String()+"/16", "dev", e.IfName); err != nil {
+		if err := ops.AddrAdd(e.IfName, addr, 16); err != nil {
 			return nil, err
 		}
-		return ip, nil
+		return addr, nil
 	}
 	return nil, fmt.Errorf("no free link-local address after 10 attempts")
 }
 
 // retryDHCP runs until a DHCP lease is obtained (then the link-local address
 // is removed) or the context is cancelled.
-func (e *Ethernet) retryDHCP(ctx context.Context, linkIP net.IP) {
-	timer := e.After(e.RetryInterval)
+func (e *Ethernet) retryDHCP(ctx context.Context, opGen uint64, linkIP net.IP) {
+	timer := e.after(e.RetryInterval)
 	for {
 		select {
 		case <-ctx.Done():
@@ -170,15 +302,19 @@ func (e *Ethernet) retryDHCP(ctx context.Context, linkIP net.IP) {
 			if ctx.Err() != nil {
 				return // cancelled while the timer was firing
 			}
-			if e.tryDHCP(ctx) {
-				if _, err := e.Runner.Run(ctx, "ip", "addr", "del", linkIP.String()+"/16", "dev", e.IfName); err != nil {
+			if ok, stop := e.tryDHCP(ctx); ok {
+				e.setStopDHCP(opGen, stop)
+				if ctx.Err() != nil {
+					return
+				}
+				if err := e.ops().AddrDel(e.IfName, linkIP, 16); err != nil {
 					e.Log.Error("ethernet: drop link-local address", "iface", e.IfName, "err", err)
 					return
 				}
 				e.Log.Info("ethernet: dhcp lease obtained, link-local dropped", "iface", e.IfName)
 				return
 			}
-			timer = e.After(e.RetryInterval)
+			timer = e.after(e.RetryInterval)
 		}
 	}
 }

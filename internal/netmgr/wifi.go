@@ -5,18 +5,27 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/emdioh/wa-transcriber/internal/netmgr/dhcpc"
+	"github.com/emdioh/wa-transcriber/internal/netmgr/netops"
 )
 
 // WifiClient manages one WiFi interface in client mode with wpa_supplicant.
 type WifiClient struct {
 	IfName string
+	MAC    net.HardwareAddr
 	Runner Runner
+	Ops    netops.Ops
+	Ctrl   WPACtrl
+	DHCP   DHCPFunc
 	Store  *WifiStore
 	// CtrlDir is the wpa_supplicant control directory (/run/wat/wpa).
 	CtrlDir string
@@ -24,26 +33,95 @@ type WifiClient struct {
 	ConfPath string
 	Log      *slog.Logger
 
-	PollInterval   time.Duration // wpa_cli status polling interval
+	PollInterval   time.Duration // control socket status polling interval
 	ConnectTimeout time.Duration // time to wait for wpa_state=COMPLETED
+	DHCPTimeout    time.Duration // deadline for one DHCP attempt after COMPLETED
 	RestartDelay   time.Duration // delay before restarting wpa_supplicant
+
+	mu       sync.Mutex
+	stopDHCP func()
 }
 
-// NewWifiClient returns a configured WiFi client.
-func NewWifiClient(ifname string, run Runner, store *WifiStore, log *slog.Logger) *WifiClient {
+// NewWifiClient returns a configured WiFi client. If ops is nil,
+// netops.Default() is used.
+func NewWifiClient(ifname string, mac net.HardwareAddr, run Runner, ops netops.Ops, store *WifiStore, log *slog.Logger) *WifiClient {
 	if log == nil {
 		log = slog.Default()
 	}
+	if ops == nil {
+		ops = netops.Default()
+	}
 	return &WifiClient{
 		IfName:         ifname,
+		MAC:            mac,
 		Runner:         run,
+		Ops:            ops,
+		DHCP:           defaultDHCPFunc(ops, dhcpc.DefaultResolvConf, log),
 		Store:          store,
 		CtrlDir:        "/run/wat/wpa",
 		ConfPath:       "/run/wat/wpa.conf",
 		Log:            log,
 		PollInterval:   500 * time.Millisecond,
 		ConnectTimeout: 45 * time.Second,
+		DHCPTimeout:    15 * time.Second,
 		RestartDelay:   2 * time.Second,
+	}
+}
+
+func (w *WifiClient) ops() netops.Ops {
+	if w.Ops != nil {
+		return w.Ops
+	}
+	return netops.Default()
+}
+
+func (w *WifiClient) ctrl() WPACtrl {
+	if w.Ctrl != nil {
+		return w.Ctrl
+	}
+	return &SocketWPACtrl{CtrlDir: w.CtrlDir, IfName: w.IfName}
+}
+
+func (w *WifiClient) dhcpFn() DHCPFunc {
+	if w.DHCP != nil {
+		return w.DHCP
+	}
+	return defaultDHCPFunc(w.ops(), dhcpc.DefaultResolvConf, w.Log)
+}
+
+func (w *WifiClient) dhcpTimeout() time.Duration {
+	if w.DHCPTimeout > 0 {
+		return w.DHCPTimeout
+	}
+	return 15 * time.Second
+}
+
+// StopDHCP cancels any background DHCP lease renewal loop without dropping the
+// interface's current address (D16).
+func (w *WifiClient) StopDHCP() {
+	w.mu.Lock()
+	stop := w.stopDHCP
+	w.stopDHCP = nil
+	w.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
+func (w *WifiClient) setStopDHCP(ctx context.Context, stop func()) {
+	if stop == nil {
+		return
+	}
+	if ctx.Err() != nil {
+		stop()
+		return
+	}
+	w.mu.Lock()
+	prev := w.stopDHCP
+	w.stopDHCP = stop
+	w.mu.Unlock()
+	if prev != nil {
+		prev()
 	}
 }
 
@@ -89,18 +167,20 @@ func (w *WifiClient) Supervise(ctx context.Context) {
 	}
 }
 
-// Connect waits until wpa_cli reports wpa_state=COMPLETED and then runs
-// DHCP. It returns once the interface has a lease or the timeout elapses.
+// Connect waits until wpa_supplicant reports wpa_state=COMPLETED over its
+// control socket and then runs DHCP. It returns once the interface has a lease
+// or the timeout elapses.
 func (w *WifiClient) Connect(ctx context.Context) error {
 	deadline := time.Now().Add(w.ConnectTimeout)
 	for time.Now().Before(deadline) {
-		out, err := w.Runner.Run(ctx, "wpa_cli", "-p", w.CtrlDir, "-i", w.IfName, "status")
+		out, err := w.ctrl().Command(ctx, "STATUS")
 		if err == nil {
 			if state, _ := parseWPACliStatus(out); state == "COMPLETED" {
-				// The interface may still hold its address from before the AP
-				// came back; our udhcpc script keeps it (or replaces it if the
-				// lease changed) without tearing the link down.
-				if dhcpLease(ctx, w.Runner, w.IfName, 15*time.Second) {
+				// Lease application uses AddrReplacePrimary (D16): it keeps an
+				// unchanged address (or replaces it if the lease changed)
+				// without tearing the link down.
+				if ok, stop := w.dhcpFn()(ctx, w.IfName, w.MAC, w.dhcpTimeout()); ok {
+					w.setStopDHCP(ctx, stop)
 					return nil
 				}
 			}
@@ -112,13 +192,24 @@ func (w *WifiClient) Connect(ctx context.Context) error {
 	return fmt.Errorf("wifi: %s did not reach COMPLETED within %s", w.IfName, w.ConnectTimeout)
 }
 
+// CurrentSSID queries wpa_supplicant over its control socket for the active
+// SSID. Returns "" on error or if not associated.
+func (w *WifiClient) CurrentSSID(ctx context.Context) string {
+	out, err := w.ctrl().Command(ctx, "STATUS")
+	if err != nil {
+		return ""
+	}
+	_, ssid := parseWPACliStatus(out)
+	return ssid
+}
+
 // Scan asks wpa_supplicant for visible networks and returns them deduped by
 // SSID, keeping the strongest signal.
 func (w *WifiClient) Scan(ctx context.Context) ([]Network, error) {
-	if _, err := w.Runner.Run(ctx, "wpa_cli", "-p", w.CtrlDir, "-i", w.IfName, "scan"); err != nil {
+	if _, err := w.ctrl().Command(ctx, "SCAN"); err != nil {
 		return nil, err
 	}
-	out, err := w.Runner.Run(ctx, "wpa_cli", "-p", w.CtrlDir, "-i", w.IfName, "scan_results")
+	out, err := w.ctrl().Command(ctx, "SCAN_RESULTS")
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +228,7 @@ func renderWPAConf(ctrlDir string, networks []SavedNetwork) string {
 	return b.String()
 }
 
-// parseWPACliStatus extracts wpa_state and ssid from wpa_cli status output.
+// parseWPACliStatus extracts wpa_state and ssid from wpa_supplicant STATUS output.
 func parseWPACliStatus(out []byte) (state, ssid string) {
 	for _, line := range strings.Split(string(out), "\n") {
 		key, val, ok := strings.Cut(line, "=")
@@ -154,7 +245,7 @@ func parseWPACliStatus(out []byte) (state, ssid string) {
 	return state, ssid
 }
 
-// parseScanResults parses wpa_cli scan_results output (tab-separated:
+// parseScanResults parses wpa_supplicant SCAN_RESULTS output (tab-separated:
 // bssid, frequency, signal level, flags, ssid).
 func parseScanResults(out []byte) []Network {
 	var nets []Network

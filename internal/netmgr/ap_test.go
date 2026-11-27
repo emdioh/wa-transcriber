@@ -2,9 +2,10 @@ package netmgr
 
 import (
 	"context"
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -17,15 +18,18 @@ func writeWatTxt(t *testing.T, content string) string {
 	return p
 }
 
-func testAP(t *testing.T, r *fakeRunner) *AP {
-	a := NewAP("wlan0", testMAC(), r, testLogger())
+func testAP(t *testing.T, r *fakeRunner, ops *fakeOps, srv *fakeAPServer) *AP {
+	a := NewAP("wlan0", testMAC(), r, ops, testLogger())
+	if srv != nil {
+		a.StartServer = srv.start()
+	}
 	a.WatTxtPath = writeWatTxt(t, "setup_ap_key=secret-pass\ncountry=IT\n")
 	a.HostapdConfPath = filepath.Join(t.TempDir(), "hostapd.conf")
 	return a
 }
 
 func TestHostapdConfGolden(t *testing.T) {
-	a := testAP(t, newFakeRunner(nil))
+	a := testAP(t, newFakeRunner(nil), newFakeOps(), &fakeAPServer{})
 	if err := a.WriteHostapdConf(); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +44,7 @@ func TestHostapdConfGolden(t *testing.T) {
 }
 
 func TestSetupKeyFallbackAndCountryDefault(t *testing.T) {
-	a := NewAP("wlan0", testMAC(), newFakeRunner(nil), testLogger())
+	a := NewAP("wlan0", testMAC(), newFakeRunner(nil), newFakeOps(), testLogger())
 	a.WatTxtPath = filepath.Join(t.TempDir(), "missing.txt")
 	if got := a.SetupKey(); got != "wa-setup-001122" {
 		t.Fatalf("fallback key = %q", got)
@@ -51,7 +55,7 @@ func TestSetupKeyFallbackAndCountryDefault(t *testing.T) {
 }
 
 func TestSetupKeyTooShortFallsBack(t *testing.T) {
-	a := NewAP("wlan0", testMAC(), newFakeRunner(nil), testLogger())
+	a := NewAP("wlan0", testMAC(), newFakeRunner(nil), newFakeOps(), testLogger())
 	a.WatTxtPath = writeWatTxt(t, "setup_ap_key=short\n")
 	if got := a.SetupKey(); got != "wa-setup-001122" {
 		t.Fatalf("key = %q", got)
@@ -60,44 +64,90 @@ func TestSetupKeyTooShortFallsBack(t *testing.T) {
 
 func TestAPStations(t *testing.T) {
 	r := newFakeRunner(nil)
-	r.outputs["iw"] = []string{string(readTestdata(t, "station_dump.txt"))}
-	a := testAP(t, r)
+	ops := newFakeOps()
+	ops.stations = 2
+	a := testAP(t, r, ops, &fakeAPServer{})
 	n, err := a.Stations(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 2 {
-		t.Fatalf("stations = %d", n)
+		t.Fatalf("stations = %d, want 2", n)
+	}
+	if got := ops.snapshot(); len(got) != 1 || got[0] != "station count wlan0" {
+		t.Fatalf("ops calls = %v", got)
+	}
+	if got := r.snapshot(); len(got) != 0 {
+		t.Fatalf("unexpected external commands for Stations: %v", got)
 	}
 }
 
 func TestAPStartCommandSequence(t *testing.T) {
 	r := newFakeRunner(nil)
-	a := testAP(t, r)
+	ops := newFakeOps()
+	srv := &fakeAPServer{}
+	a := testAP(t, r, ops, srv)
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	calls := r.snapshot()
-	want := []string{
-		"ip addr flush dev wlan0",
-		"ip addr add 192.168.4.1/24 dev wlan0",
-		"ip link set wlan0 up",
-		"hostapd " + a.HostapdConfPath,
-		"dnsmasq --keep-in-foreground --no-resolv --no-hosts --interface=wlan0 --bind-interfaces --dhcp-range=192.168.4.10,192.168.4.100,255.255.255.0,1h --address=/#/192.168.4.1 --dhcp-option=114,http://192.168.4.1/",
+
+	wantOps := []string{
+		"addr flush dev wlan0",
+		"addr add 192.168.4.1/24 dev wlan0",
+		"link up wlan0",
 	}
-	if len(calls) != len(want) {
-		t.Fatalf("calls = %v, want %v", calls, want)
+	gotOps := ops.snapshot()
+	if len(gotOps) != len(wantOps) {
+		t.Fatalf("ops calls = %v, want %v", gotOps, wantOps)
 	}
-	for i := range want {
-		if calls[i] != want[i] {
-			t.Errorf("call %d = %q, want %q", i, calls[i], want[i])
+	for i := range wantOps {
+		if gotOps[i] != wantOps[i] {
+			t.Errorf("ops call %d = %q, want %q", i, gotOps[i], wantOps[i])
 		}
 	}
-	// Stop flushes the address again.
+
+	// Only hostapd should be exec'd via Runner (never ip, iw, or dnsmasq).
+	gotRun := r.snapshot()
+	wantRun := []string{"hostapd " + a.HostapdConfPath}
+	if len(gotRun) != 1 || gotRun[0] != wantRun[0] {
+		t.Fatalf("runner calls = %v, want %v", gotRun, wantRun)
+	}
+
+	cfgs := srv.snapshot()
+	if len(cfgs) != 1 {
+		t.Fatalf("apsrv starts = %d, want 1", len(cfgs))
+	}
+	if cfgs[0].IfName != "wlan0" || !cfgs[0].ServerIP.Equal(net.IPv4(192, 168, 4, 1)) {
+		t.Fatalf("apsrv cfg = %+v", cfgs[0])
+	}
+	if ones, bits := cfgs[0].Mask.Size(); ones != 24 || bits != 32 {
+		t.Fatalf("apsrv mask = %v, want /24", cfgs[0].Mask)
+	}
+
+	// Stop closes apsrv, stops hostapd, and flushes the address again.
 	if err := a.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if last := r.snapshot()[len(r.snapshot())-1]; !strings.Contains(last, "ip addr flush dev wlan0") {
-		t.Errorf("last call after Stop = %q", last)
+	if srv.closeCount() != 1 {
+		t.Errorf("apsrv close count = %d, want 1", srv.closeCount())
+	}
+	if r.stopCount() != 1 {
+		t.Errorf("hostapd stop count = %d, want 1", r.stopCount())
+	}
+	if last := ops.snapshot()[len(ops.snapshot())-1]; last != "addr flush dev wlan0" {
+		t.Errorf("last ops call after Stop = %q", last)
+	}
+}
+
+func TestAPStartCleansUpHostapdWhenServerFails(t *testing.T) {
+	r := newFakeRunner(nil)
+	ops := newFakeOps()
+	srv := &fakeAPServer{startErr: errors.New("bind failed")}
+	a := testAP(t, r, ops, srv)
+	if err := a.Start(context.Background()); err == nil {
+		t.Fatal("expected Start to fail when apsrv fails")
+	}
+	if r.stopCount() != 1 {
+		t.Fatalf("hostapd stop count = %d, want 1", r.stopCount())
 	}
 }

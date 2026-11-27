@@ -7,18 +7,35 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/emdioh/wa-transcriber/internal/netmgr/apsrv"
+	"github.com/emdioh/wa-transcriber/internal/netmgr/netops"
 )
 
+// APServerStart launches the in-process setup-AP DHCPv4 + wildcard DNS server
+// and returns a close function that stops it.
+type APServerStart func(ctx context.Context, cfg apsrv.Config) (func() error, error)
+
+func defaultAPServerStart(ctx context.Context, cfg apsrv.Config) (func() error, error) {
+	srv, err := apsrv.Start(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return srv.Close, nil
+}
+
 // AP manages the setup access point: a WPA2 network served by hostapd with
-// DHCP and DNS from dnsmasq, so a phone can always reach the web UI.
+// in-process DHCP and wildcard DNS from apsrv, so a phone can always reach the
+// web UI.
 type AP struct {
-	IfName string
-	MAC    net.HardwareAddr
-	Runner Runner
-	Log    *slog.Logger
+	IfName      string
+	MAC         net.HardwareAddr
+	Runner      Runner
+	Ops         netops.Ops
+	StartServer APServerStart
+	Log         *slog.Logger
 
 	// WatTxtPath is the boot-partition settings file (FAT, editable from any
 	// PC). M6 creates it on the images.
@@ -31,21 +48,41 @@ type AP struct {
 	stop func()
 }
 
-// NewAP returns a configured access-point controller.
-func NewAP(ifname string, mac net.HardwareAddr, run Runner, log *slog.Logger) *AP {
+// NewAP returns a configured access-point controller. If ops is nil,
+// netops.Default() is used.
+func NewAP(ifname string, mac net.HardwareAddr, run Runner, ops netops.Ops, log *slog.Logger) *AP {
 	if log == nil {
 		log = slog.Default()
+	}
+	if ops == nil {
+		ops = netops.Default()
 	}
 	return &AP{
 		IfName:          ifname,
 		MAC:             mac,
 		Runner:          run,
+		Ops:             ops,
+		StartServer:     defaultAPServerStart,
 		Log:             log,
 		WatTxtPath:      "/boot/wat.txt",
 		HostapdConfPath: "/run/wat/hostapd.conf",
 		IP:              "192.168.4.1",
 		PrefixLen:       24,
 	}
+}
+
+func (a *AP) ops() netops.Ops {
+	if a.Ops != nil {
+		return a.Ops
+	}
+	return netops.Default()
+}
+
+func (a *AP) startServer() APServerStart {
+	if a.StartServer != nil {
+		return a.StartServer
+	}
+	return defaultAPServerStart
 }
 
 // SetupKey returns the WPA2 passphrase for the setup AP: the value of
@@ -77,16 +114,21 @@ func (a *AP) WriteHostapdConf() error {
 	return os.WriteFile(a.HostapdConfPath, []byte(conf), 0o600)
 }
 
-// Start brings the interface up as the setup AP and launches hostapd and
-// dnsmasq. It stops any previously started instance first.
+// Start brings the interface up as the setup AP and launches hostapd and the
+// in-process DHCP/DNS server. It stops any previously started instance first.
 func (a *AP) Start(ctx context.Context) error {
-	if _, err := a.Runner.Run(ctx, "ip", "addr", "flush", "dev", a.IfName); err != nil {
+	serverIP := net.ParseIP(a.IP).To4()
+	if serverIP == nil {
+		return fmt.Errorf("ap: invalid IPv4 address %q", a.IP)
+	}
+	ops := a.ops()
+	if err := ops.AddrFlush(a.IfName); err != nil {
 		return err
 	}
-	if _, err := a.Runner.Run(ctx, "ip", "addr", "add", a.IP+"/"+strconv.Itoa(a.PrefixLen), "dev", a.IfName); err != nil {
+	if err := ops.AddrAdd(a.IfName, serverIP, a.PrefixLen); err != nil {
 		return err
 	}
-	if _, err := a.Runner.Run(ctx, "ip", "link", "set", a.IfName, "up"); err != nil {
+	if err := ops.LinkUp(a.IfName); err != nil {
 		return err
 	}
 	if err := a.WriteHostapdConf(); err != nil {
@@ -97,24 +139,40 @@ func (a *AP) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	stopD, _, err := a.Runner.Start(ctx, "dnsmasq", a.dnsmasqArgs()...)
+	closeSrv, err := a.startServer()(ctx, apsrv.Config{
+		IfName:   a.IfName,
+		ServerIP: serverIP,
+		Mask:     net.CIDRMask(a.PrefixLen, 32),
+		Log:      a.Log,
+	})
 	if err != nil {
-		stopH()
+		if stopH != nil {
+			stopH()
+		}
 		return err
 	}
 
-	stop := func() { stopD(); stopH() }
-	a.mu.Lock()
-	if a.stop != nil {
-		a.stop()
+	stop := func() {
+		if closeSrv != nil {
+			_ = closeSrv()
+		}
+		if stopH != nil {
+			stopH()
+		}
 	}
+	a.mu.Lock()
+	prev := a.stop
 	a.stop = stop
 	a.mu.Unlock()
+	if prev != nil {
+		prev()
+	}
 	return nil
 }
 
-// Stop terminates hostapd/dnsmasq and flushes the interface addresses.
-func (a *AP) Stop(ctx context.Context) error {
+// Stop terminates the DHCP/DNS server and hostapd, and flushes the interface
+// addresses.
+func (a *AP) Stop(_ context.Context) error {
 	a.mu.Lock()
 	stop := a.stop
 	a.stop = nil
@@ -122,36 +180,12 @@ func (a *AP) Stop(ctx context.Context) error {
 	if stop != nil {
 		stop()
 	}
-	_, err := a.Runner.Run(ctx, "ip", "addr", "flush", "dev", a.IfName)
-	return err
+	return a.ops().AddrFlush(a.IfName)
 }
 
 // Stations reports how many clients are associated with the AP.
-func (a *AP) Stations(ctx context.Context) (int, error) {
-	out, err := a.Runner.Run(ctx, "iw", "dev", a.IfName, "station", "dump")
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "Station ") {
-			count++
-		}
-	}
-	return count, nil
-}
-
-func (a *AP) dnsmasqArgs() []string {
-	return []string{
-		"--keep-in-foreground",
-		"--no-resolv",
-		"--no-hosts",
-		"--interface=" + a.IfName,
-		"--bind-interfaces",
-		"--dhcp-range=192.168.4.10,192.168.4.100,255.255.255.0,1h",
-		"--address=/#/" + a.IP,
-		"--dhcp-option=114,http://" + a.IP + "/",
-	}
+func (a *AP) Stations(_ context.Context) (int, error) {
+	return a.ops().StationCount(a.IfName)
 }
 
 // watValue reads key=value lines from wat.txt (shared parser, see

@@ -9,16 +9,21 @@ import (
 	"time"
 
 	"github.com/emdioh/wa-transcriber/internal/netmgr/mdns"
+	"github.com/emdioh/wa-transcriber/internal/netmgr/netops"
 	"github.com/emdioh/wa-transcriber/internal/status"
 )
 
 // managed is mode "managed": it discovers the interfaces, drives ethernet,
 // the WiFi client and the setup AP, and runs the policy loop from policy.go.
 type managed struct {
-	fsys FS
-	base string
-	run  Runner
-	log  *slog.Logger
+	fsys        FS
+	base        string
+	run         Runner
+	ops         netops.Ops
+	dhcp        DHCPFunc
+	startServer APServerStart
+	wpaCtrl     func(ctrlDir, ifname string) WPACtrl
+	log         *slog.Logger
 	// store holds the saved WiFi networks (nil: none persisted).
 	store *WifiStore
 	// watTxtPath is the boot file the WiFi details can be provisioned from.
@@ -81,6 +86,7 @@ func newManaged(store *WifiStore, addrs func() []status.Addr, paired func() bool
 		fsys:         osFS{},
 		base:         "/sys/class/net",
 		run:          execRunner{},
+		ops:          netops.Default(),
 		log:          log,
 		store:        store,
 		watTxtPath:   WatTxtPath,
@@ -167,16 +173,31 @@ func (m *managed) discover() error {
 		}
 		switch info.Kind {
 		case KindEthernet:
+			eth := NewEthernet(info.Name, hw, m.ops, m.log)
+			if m.dhcp != nil {
+				eth.DHCP = m.dhcp
+			}
 			m.mu.Lock()
-			m.eths[info.Name] = &ethUnit{dev: NewEthernet(info.Name, hw, m.run, m.log)}
+			m.eths[info.Name] = &ethUnit{dev: eth}
 			m.mu.Unlock()
 		case KindWiFi:
+			client := NewWifiClient(info.Name, hw, m.run, m.ops, m.store, m.log)
+			if m.dhcp != nil {
+				client.DHCP = m.dhcp
+			}
+			if m.wpaCtrl != nil {
+				client.Ctrl = m.wpaCtrl(client.CtrlDir, info.Name)
+			}
+			ap := NewAP(info.Name, hw, m.run, m.ops, m.log)
+			if m.startServer != nil {
+				ap.StartServer = m.startServer
+			}
 			m.mu.Lock()
 			m.wifis[info.Name] = &wifiUnit{
 				ifname: info.Name,
 				mac:    hw,
-				client: NewWifiClient(info.Name, m.run, m.store, m.log),
-				ap:     NewAP(info.Name, hw, m.run, m.log),
+				client: client,
+				ap:     ap,
 				state:  stateOff,
 			}
 			m.mu.Unlock()
@@ -301,6 +322,7 @@ func (m *managed) stepWiFi(ctx context.Context, info InterfaceInfo) {
 			}
 		}()
 	case actStartAP:
+		u.client.StopDHCP()
 		if err := u.ap.Start(ctx); err != nil {
 			m.log.Error("network manager: start setup AP", "iface", u.ifname, "err", err)
 		}
@@ -479,17 +501,12 @@ func (m *managed) Erase() error {
 	return m.store.Erase()
 }
 
-// currentSSID asks wpa_cli for the SSID we are connected to.
+// currentSSID asks wpa_supplicant for the SSID we are connected to.
 func (u *wifiUnit) currentSSID() string {
 	if u.state != stateConnected {
 		return ""
 	}
-	out, err := u.client.Runner.Run(context.Background(), "wpa_cli", "-p", u.client.CtrlDir, "-i", u.ifname, "status")
-	if err != nil {
-		return ""
-	}
-	_, ssid := parseWPACliStatus(out)
-	return ssid
+	return u.client.CurrentSSID(context.Background())
 }
 
 // stations is a tolerant wrapper for the Status page.
