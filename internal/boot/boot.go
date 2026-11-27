@@ -238,7 +238,6 @@ func Setup(ctx context.Context, o Options) error {
 			return err
 		}
 	}
-	o.setHostname()
 	// Nothing else brings lo up on this image, and without it a health check
 	// on 127.0.0.1 answers "network unreachable".
 	if err := o.ifUp("lo"); err != nil {
@@ -250,6 +249,8 @@ func Setup(ctx context.Context, o Options) error {
 	if err := o.mountBoot(ctx); err != nil {
 		o.Log.Warn("boot partition not mounted, wat.txt is ignored", "err", err)
 	}
+	// After /boot: hostname= in wat.txt overrides the read-only /etc/hostname.
+	o.setHostname()
 	o.loadModules(ctx)
 	o.registerHotplug()
 	o.coldplugUSB(ctx)
@@ -289,17 +290,11 @@ func pseudoMounts() []mountSpec {
 	}
 }
 
-// setHostname applies /etc/hostname. The kernel starts every boot with the
-// board's default name and nothing else would ever set it.
+// setHostname applies hostname= from wat.txt when set, otherwise /etc/hostname.
+// The kernel starts every boot with the board's default name and nothing else
+// would ever set it.
 func (o Options) setHostname() {
-	if o.HostnameFile == "" {
-		return
-	}
-	b, err := o.ReadFile(o.HostnameFile)
-	if err != nil {
-		return
-	}
-	name := strings.TrimSpace(string(b))
+	name := o.resolveHostname()
 	if name == "" {
 		return
 	}
@@ -308,6 +303,42 @@ func (o Options) setHostname() {
 		return
 	}
 	o.Log.Info("host name set", "name", name)
+}
+
+func (o Options) resolveHostname() string {
+	if o.WatFile != "" {
+		if b, err := o.ReadFile(o.WatFile); err == nil {
+			if raw, ok := watValue(b, "hostname"); ok && raw != "" {
+				n := strings.ToLower(strings.TrimSuffix(strings.TrimSuffix(raw, "."), ".local"))
+				if validHostname(n) {
+					return n
+				}
+				o.Log.Warn("invalid hostname= in wat.txt, falling back to /etc/hostname", "value", raw)
+			}
+		}
+	}
+	if o.HostnameFile == "" {
+		return ""
+	}
+	b, err := o.ReadFile(o.HostnameFile)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func validHostname(s string) bool {
+	if len(s) == 0 || len(s) > 63 || s[0] == '-' || s[len(s)-1] == '-' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // loadModules loads the first module in Options.Modules that loads. On the
