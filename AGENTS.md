@@ -50,13 +50,18 @@ Read them before larger changes.
 
 ## Where we stopped (2026-11-25, second session): M12, the binary as init
 
-**Milestone M12, branch `kernelwa` (worktree `../wa-transcriber-kernelwa`),
-7 commits, not merged, `main` untouched.** The idea: the binary *is* the
-machine's init — `init=/usr/bin/wa-transcriber` in the bootloader, no
-inittab, no `rcS`, no shell in the boot path — which is most of what a
-unikernel would buy on this hardware without giving up `wpa_supplicant`. The
-design (D19 and section 12) is in the **branch's** `docs/ARCHITECTURE.md`, so
-`git show kernelwa:docs/ARCHITECTURE.md` until it merges.
+**Milestone M12, branch `kernelwa`, which now lives only on the remote
+(`origin/kernelwa`) — its local worktree `../wa-transcriber-kernelwa` and the
+local branch were cleaned up; `git worktree add -b kernelwa
+../wa-transcriber-kernelwa origin/kernelwa` brings both back. Not merged,
+`main` untouched.** It carries the 7 init commits below, rebased, plus later
+work (SNTP client, idempotent USB UDC/getty, the S01data port). The idea: the
+binary *is* the machine's init — `init=/usr/bin/wa-transcriber` in the
+bootloader, no inittab, no `rcS`, no shell in the boot path — which is most of
+what a unikernel would buy on this hardware without giving up
+`wpa_supplicant`. The design (D19 and section 12) is in the **branch's**
+`docs/ARCHITECTURE.md`, so `git show origin/kernelwa:docs/ARCHITECTURE.md`
+until it merges.
 
 What the branch adds: `internal/boot` (mounts /proc /sys /dev, the tmpfs set,
 hostname, lo, `/boot` ro from p1, `/data` from p4 including the first-boot
