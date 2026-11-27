@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/emdioh/wa-transcriber/internal/part"
 )
 
 // rootPartition returns the device node the running root filesystem is on.
@@ -259,19 +261,9 @@ func (o Options) mountData(ctx context.Context) error {
 	if dev == "" {
 		p4 := partOf(disk, 4)
 		if !isBlock(p4) {
-			// ",+,83": all free space, Linux type. sfdisk re-reads the table
-			// itself through BLKPG, which works while the root filesystem on
-			// that disk is mounted; --no-reread stops it from asking the
-			// kernel to re-read a table it is using.
 			o.Log.Info("creating the data partition", "disk", disk)
-			if err := o.Run(ctx, ",+,83\n", "sfdisk", "--append", "--no-reread", disk); err != nil {
+			if err := o.CreateDataPart(disk); err != nil {
 				return fmt.Errorf("boot: creating the data partition: %w", err)
-			}
-			// partx adds the new node to the running kernel. It answers with
-			// an error when the node is already there, which is not a
-			// failure here.
-			if err := o.Run(ctx, "", "partx", "-a", "--nr", "4", disk); err != nil {
-				o.Log.Debug("partx reported a problem, waiting for the node", "err", err)
 			}
 			if !o.waitBlock(p4) {
 				return fmt.Errorf("boot: %s did not appear after creating it", p4)
@@ -324,4 +316,14 @@ func (o Options) mountExt4(ctx context.Context, dev, target string) error {
 		return fmt.Errorf("boot: %s: %w", dev, err)
 	}
 	return nil
+}
+
+// createDataPart appends a Linux (0x83) MBR partition in slot 4 covering all
+// remaining space on disk and registers it with the running kernel via BLKPG.
+func createDataPart(disk string) error {
+	start, length, err := part.AppendMBRPartition(disk, 4, 0x83)
+	if err != nil {
+		return err
+	}
+	return part.AddKernelPartition(disk, 4, start, length)
 }

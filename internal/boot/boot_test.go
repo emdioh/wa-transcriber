@@ -260,20 +260,18 @@ func TestMountDataKeepsLabeledData(t *testing.T) {
 func TestMountDataCreatesPartition(t *testing.T) {
 	m := newFakeMachine(t)
 	o := m.options()
-	// sfdisk is what makes the node appear in the kernel.
-	o.Run = func(_ context.Context, stdin, name string, args ...string) error {
-		m.runs = append(m.runs, record(name, args, stdin))
-		if name == "sfdisk" {
-			writeFile(t, filepath.Join(m.devDir, "mmcblk0p4"), nil)
-		}
+	var createdDisk string
+	o.CreateDataPart = func(disk string) error {
+		createdDisk = disk
+		writeFile(t, filepath.Join(m.devDir, "mmcblk0p4"), nil)
 		return nil
 	}
 	if err := m.mountDataOnly(context.Background(), o); err != nil {
 		t.Fatalf("mountData: %v", err)
 	}
 	disk := m.devDir + "/mmcblk0"
-	if want := record("sfdisk", []string{"--append", "--no-reread", disk}, ",+,83\n"); !contains(m.runs, want) {
-		t.Fatalf("sfdisk was not called as expected (%q): %v", want, m.runs)
+	if createdDisk != disk {
+		t.Fatalf("CreateDataPart disk = %q, want %q", createdDisk, disk)
 	}
 	if want := record("mkfs.ext4", []string{"-q", "-L", DataLabel, disk + "p4"}, ""); !contains(m.runs, want) {
 		t.Fatalf("mkfs.ext4 was not called as expected (%q): %v", want, m.runs)
@@ -311,11 +309,8 @@ func TestMountDataNeverUsesRootSlots(t *testing.T) {
 
 	// p2 carries DATA and there is no p4: Setup creates p4 rather than
 	// adopting the running root slot.
-	o.Run = func(_ context.Context, _, name string, args ...string) error {
-		m.runs = append(m.runs, strings.TrimSpace(name+" "+strings.Join(args, " ")))
-		if name == "sfdisk" {
-			writeFile(t, filepath.Join(m.devDir, "mmcblk0p4"), nil)
-		}
+	o.CreateDataPart = func(string) error {
+		writeFile(t, filepath.Join(m.devDir, "mmcblk0p4"), nil)
 		return nil
 	}
 	if err := m.mountDataOnly(context.Background(), o); err != nil {

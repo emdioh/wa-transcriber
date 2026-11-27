@@ -7,11 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/emdioh/wa-transcriber/internal/proc"
+	"github.com/emdioh/wa-transcriber/internal/part"
 )
 
 // Refusals that are not about the target: each one is a sentence the console
@@ -73,16 +72,16 @@ type Request struct {
 	// file) says so before it starts and how long it took after.
 	Logf func(format string, args ...any)
 	// RereadFunc makes the kernel re-read the partition table of a disk, like
-	// partprobe(8). Nil is the board's implementation (partx -u), which the
-	// image has. It is best effort: a failure only makes the mount below
+	// partprobe(8). Nil is the board's implementation (BLKRRPART with BLKPG
+	// fallback). It is best effort: a failure only makes the mount below
 	// report the less specific error.
 	RereadFunc func(disk string) error
 	// UmountFunc detaches a mount point. Nil is the board's implementation
 	// (unmount(2)); a test injects its own because nothing is really mounted.
 	UmountFunc func(dir string) error
-	// MountFunc mounts a device like "mount"(8) would:
-	// MountFunc(device, dir, "ro") and MountFunc(dir, "", "remount,rw"). Nil
-	// is the board's implementation (exec mount, which the image has).
+	// MountFunc mounts a device or remounts a mount point:
+	// MountFunc(device, dir, "rw") and MountFunc(dir, "", "remount,ro"). Nil
+	// is the board's implementation (mount(2)).
 	MountFunc func(src, dir, opts string) error
 	// Stage replaces what is done inside the writable window on the target's
 	// boot partition (stage the files, then write the marker), so a test can
@@ -467,18 +466,12 @@ func (r Request) stageFunc(m Marker, t Target) func(dir string) (Stage, error) {
 // rereadFunc re-reads the partition table after the clone: the kernel still
 // holds the table the target had before, whose offsets no longer match what
 // was just written, so mounting <disk>p1 reads the old layout (on the board
-// that is EINVAL). partx -u is in the image (S01data uses it).
+// that is EINVAL).
 func (r Request) rereadFunc() func(disk string) error {
 	if r.RereadFunc != nil {
 		return r.RereadFunc
 	}
-	return func(disk string) error {
-		out, err := proc.CombinedOutput(exec.Command("partx", "-u", disk))
-		if err != nil {
-			return fmt.Errorf("partx -u %s: %w: %s", disk, err, strings.TrimSpace(string(out)))
-		}
-		return nil
-	}
+	return part.RereadTable
 }
 
 // umountFunc detaches the staging mount: the request's own, or unmount(2).
@@ -497,30 +490,12 @@ func (r Request) logf() func(string, ...any) {
 	return func(string, ...any) {}
 }
 
-// mountFunc is the mount the staging uses: the request's own, or mount(8).
+// mountFunc is the mount the staging uses: the request's own, or mount(2).
 func (r Request) mountFunc() func(src, dir, opts string) error {
 	if r.MountFunc != nil {
 		return r.MountFunc
 	}
-	return func(src, dir, opts string) error {
-		args := []string{"-o", opts}
-		target := dir
-		if dir == "" {
-			// The remount form: MountFunc(dir, "", "remount,ro"), as the
-			// interface above documents and the staging cleanup uses. mount(8)
-			// wants `mount -o remount,ro <dir>` with no second argument, so
-			// passing both was an EINVAL ("No such file or directory") that
-			// left the boot partition mounted read-write.
-			target = src
-		} else if src != "" {
-			args = append(args, src)
-		}
-		out, err := proc.CombinedOutput(exec.Command("mount", append(args, target)...))
-		if err != nil {
-			return fmt.Errorf("mount -o %s %s %s: %w: %s", opts, src, dir, err, strings.TrimSpace(string(out)))
-		}
-		return nil
-	}
+	return mountFS
 }
 
 // deviceSize is the size of a block device or file (0 when unknown).

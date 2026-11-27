@@ -89,7 +89,10 @@ type Options struct {
 	// image has every one of them (the root filesystem is read-only), so this
 	// only matters on a machine where the package is exercised by a test.
 	MkdirAll func(string, os.FileMode) error
-	// Run executes a helper (modprobe, sfdisk, mkfs.ext4) with optional stdin.
+	// CreateDataPart appends partition 4 to disk and registers it with the
+	// kernel. Nil uses the MBR writer and BLKPG ioctl.
+	CreateDataPart func(disk string) error
+	// Run executes a helper (modprobe, mkfs.ext4, e2fsck) with optional stdin.
 	Run func(ctx context.Context, stdin, name string, args ...string) error
 
 	// Unexported hooks for unit tests to observe removal ordering without
@@ -182,6 +185,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.MkdirAll == nil {
 		o.MkdirAll = os.MkdirAll
+	}
+	if o.CreateDataPart == nil {
+		o.CreateDataPart = createDataPart
 	}
 	if o.Run == nil {
 		o.Run = runCmd

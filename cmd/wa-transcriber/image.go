@@ -14,14 +14,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/emdioh/wa-transcriber/internal/imageupdate"
-	"github.com/emdioh/wa-transcriber/internal/proc"
 	"github.com/emdioh/wa-transcriber/internal/update"
 	"github.com/emdioh/wa-transcriber/internal/web"
 )
@@ -44,7 +42,7 @@ type imageRequest struct {
 	// "/". A test has no / to stat.
 	Root string
 	// BootRW makes the boot partition writable for one write; nil means
-	// mount(8) on /boot.
+	// mount(2) remount on /boot.
 	BootRW func() (func() error, error)
 }
 
@@ -112,21 +110,6 @@ func imageLayout(req imageRequest) (imageupdate.Layout, error) {
 		DevDir:   req.DevDir,
 		Slots:    s.Slots,
 	}, nil
-}
-
-// remountBoot enters (-o remount,rw) or leaves (ro) the boot partition. It runs
-// mount(8), which the image has: the boot partition is read-only by design, so
-// it is writable only for the millisecond of one atomic rename.
-func remountBoot(dir string, rw bool) error {
-	mode := "ro"
-	if rw {
-		mode = "rw"
-	}
-	out, err := proc.CombinedOutput(exec.Command("mount", "-o", "remount,"+mode, dir))
-	if err != nil {
-		return fmt.Errorf("mount -o remount,%s %s: %w: %s", mode, dir, err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 // bootRW is the scope imageupdate.Service.BootRW and BootIn want: make /boot
