@@ -1,8 +1,8 @@
 #!/bin/sh
 #
-# Common post-build step for both boards: install wat.txt on the boot
-# partition (it is put there by genimage via the board config), make sure
-# the release-specific bits are in place and drop build-time leftovers.
+# Common post-build step for all boards: ensure all mountpoints exist on the
+# read-only rootfs, point /etc/resolv.conf at the /tmp tmpfs, remove any
+# distro init scripts or docs, and link WiFi firmware where Linux 6.1 looks.
 #
 # $1 is the target directory.
 
@@ -10,20 +10,20 @@ set -eu
 
 TARGET_DIR="$1"
 
-# The data directory must exist even when the DATA partition is missing, so
-# the process can start and show the problem in the web UI.
+# All mountpoints used by internal/boot must exist on the read-only rootfs.
 mkdir -p "$TARGET_DIR/data"
-
-# Mountpoint for the boot partition: the root filesystem is read-only, so
-# S00boot cannot create it, and wat.txt is read through it.
 mkdir -p "$TARGET_DIR/boot"
+mkdir -p "$TARGET_DIR/proc" "$TARGET_DIR/sys" "$TARGET_DIR/dev" \
+         "$TARGET_DIR/tmp" "$TARGET_DIR/run" \
+         "$TARGET_DIR/var/log" "$TARGET_DIR/var/lib" "$TARGET_DIR/var/lib/misc"
 
-# Read-only root: no network manager from the distro and, above all, no
-# distro dnsmasq: the setup AP starts its own (port 53/67 would clash).
-rm -f "$TARGET_DIR/etc/init.d/S40network" "$TARGET_DIR/etc/init.d/S80dnsmasq" 2>/dev/null || true
+# The root filesystem is read-only; resolv.conf lives on the /tmp tmpfs so
+# the pure-Go DHCP client can update nameservers at runtime.
+mkdir -p "$TARGET_DIR/etc"
+ln -sf /tmp/resolv.conf "$TARGET_DIR/etc/resolv.conf"
 
-# wpa_supplicant is driven by the binary, never by a distro init script.
-rm -f "$TARGET_DIR/etc/init.d/S45wpa_supplicant" "$TARGET_DIR/etc/init.d/S95wpa_supplicant" 2>/dev/null || true
+# Barebones appliance (D19): wa-transcriber is PID 1, no init scripts exist.
+rm -rf "$TARGET_DIR/etc/init.d"
 
 # Keep the image small: no docs, no locales.
 rm -rf "$TARGET_DIR/usr/share/man" "$TARGET_DIR/usr/share/doc" \

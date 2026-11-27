@@ -28,14 +28,14 @@ country=IT
 # hostname: mDNS name, <hostname>.local (default wa).
 hostname=wa
 
-# console: debug login shell on the device. "off" | "serial" | "usb" | "hdmi" |
-#          "both" (serial+usb) | "all" (everything). "serial" is the UART
-#          header (/dev/ttyS0 on the BeagleBone, /dev/ttyAMA0 on the Raspberry
-#          Pi 2), "usb" the mini-USB client port (BeagleBone only), "hdmi" the
-#          HDMI output with a USB keyboard on the host port.
+# console: built-in read-only diagnostic console (no shell, no BusyBox).
+#          "off" | "serial" | "usb" | "hdmi" | "both" (serial+usb) | "all"
+#          (everything). "serial" is the UART header (/dev/ttyS0 on the
+#          BeagleBone and Cubieboard, /dev/ttyAMA0 on the Raspberry Pi 1/2),
+#          "usb" the USB client port CDC-ACM gadget (/dev/ttyGS0), "hdmi"
+#          the HDMI output (/dev/tty1) with a USB keyboard.
 #
-#          These images ship with "all" while the boot and network work is
-#          still being validated. There is no root password: anyone who can
-#          reach one of those ports is root, so set "off" before the device
-#          leaves your hands. See os/README.md.
+#          Supports read-only inspection commands (help, uptime, mem, mounts,
+#          ip, ps) plus reboot; there is no /bin/sh or arbitrary command
+#          execution. Set "off" to disable completely. See os/README.md.
 console=all

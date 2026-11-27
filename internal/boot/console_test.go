@@ -1,7 +1,10 @@
 package boot
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +24,7 @@ func TestParseConsoleMode(t *testing.T) {
 		{"hdmi", consoleChannels{hdmi: true}, true},
 		{"both", consoleChannels{serial: true, usb: true}, true},
 		{"all", consoleChannels{serial: true, usb: true, hdmi: true}, true},
-		// A typo must not open a passwordless root shell.
+		// A typo must not open a console unintentionally.
 		{"on", consoleChannels{}, false},
 		{"ALL", consoleChannels{}, false},
 	}
@@ -69,15 +72,15 @@ func TestSetupConsoleSpawnsTheAskedChannels(t *testing.T) {
 	want := map[string]bool{"ttyS0": true, "ttyGS0": true, "tty1": true}
 	for _, tty := range spawned {
 		if !want[tty] {
-			t.Errorf("spawned a login on %q, which wat.txt did not ask for", tty)
+			t.Errorf("spawned a console on %q, which wat.txt did not ask for", tty)
 		}
 		delete(want, tty)
 	}
 	if len(want) != 0 {
-		t.Fatalf("no login on %v (spawned: %v)", keys(want), spawned)
+		t.Fatalf("no console on %v (spawned: %v)", keys(want), spawned)
 	}
 
-	// The gadget tree is what S02console used to write through configfs.
+	// The gadget tree created through configfs.
 	g := filepath.Join(o.ConfigFS, "usb_gadget", "wat")
 	if v, err := os.ReadFile(filepath.Join(g, "idVendor")); err != nil || strings.TrimSpace(string(v)) != "0x1d6b" {
 		t.Errorf("idVendor = %q, %v", v, err)
@@ -104,7 +107,7 @@ func TestSetupConsoleOffAndUnknown(t *testing.T) {
 		}
 		o.setupConsole(context.Background())
 		if len(spawned) != 0 {
-			t.Errorf("wat.txt %q spawned a login on %v", body, spawned)
+			t.Errorf("wat.txt %q spawned a console on %v", body, spawned)
 		}
 	}
 }
@@ -196,72 +199,6 @@ func TestUSBACMBindsWhenUDCFileIsEmpty(t *testing.T) {
 	}
 }
 
-func TestSetupConsoleSkipsAlreadyRunningGetty(t *testing.T) {
-	m := newFakeMachine(t)
-	writeFile(t, filepath.Join(m.devDir, "ttyGS0"), nil)
-	writeFile(t, filepath.Join(m.devDir, "tty1"), nil)
-	writeFile(t, filepath.Join(m.dir, "model"), []byte("TI AM335x BeagleBone Black"))
-	udcDir := filepath.Join(m.dir, "udc")
-	writeFile(t, filepath.Join(udcDir, "musb-hdrc.1.auto"), nil)
-
-	var spawned []string
-	o := m.options()
-	o.WatFile = filepath.Join(m.dir, "wat.txt")
-	o.ModelFile = filepath.Join(m.dir, "model")
-	o.ConfigFS = filepath.Join(m.dir, "configfs")
-	o.UDCDir = udcDir
-	o.Spawn = func(tty string) { spawned = append(spawned, tty) }
-	writeFile(t, o.WatFile, []byte("console=all\n"))
-
-	// ttyS0 has a getty, ttyGS0 has a busybox getty with /dev/ path;
-	// tty1 has none (tty10 and grep tty1 must not suppress tty1).
-	writeFile(t, filepath.Join(o.ProcDir, "100", "cmdline"), []byte("getty\x00-L\x00115200\x00ttyS0\x00vt100\x00"))
-	writeFile(t, filepath.Join(o.ProcDir, "101", "cmdline"), []byte("/bin/busybox\x00getty\x00-L\x00115200\x00/dev/ttyGS0\x00vt100\x00"))
-	writeFile(t, filepath.Join(o.ProcDir, "102", "cmdline"), []byte("getty\x00-L\x00115200\x00tty10\x00vt100\x00"))
-	writeFile(t, filepath.Join(o.ProcDir, "103", "cmdline"), []byte("grep\x00tty1\x00/var/log/messages\x00"))
-	writeFile(t, filepath.Join(o.ProcDir, "104", "cmdline"), nil)
-	writeFile(t, filepath.Join(o.ProcDir, "self", "cmdline"), []byte("getty\x00-L\x00115200\x00tty1\x00vt100\x00"))
-
-	o.setupConsole(context.Background())
-
-	if len(spawned) != 1 || spawned[0] != "tty1" {
-		t.Fatalf("spawned = %v, want only [tty1]", spawned)
-	}
-}
-
-func TestSetupConsoleSkipsAlreadyRunningLogin(t *testing.T) {
-	m := newFakeMachine(t)
-	writeFile(t, filepath.Join(m.devDir, "ttyGS0"), nil)
-	writeFile(t, filepath.Join(m.dir, "model"), []byte("TI AM335x BeagleBone Black"))
-	udcDir := filepath.Join(m.dir, "udc")
-	writeFile(t, filepath.Join(udcDir, "musb-hdrc.1.auto"), nil)
-
-	var spawned []string
-	o := m.options()
-	o.WatFile = filepath.Join(m.dir, "wat.txt")
-	o.ModelFile = filepath.Join(m.dir, "model")
-	o.ConfigFS = filepath.Join(m.dir, "configfs")
-	o.UDCDir = udcDir
-	o.Spawn = func(tty string) { spawned = append(spawned, tty) }
-	writeFile(t, o.WatFile, []byte("console=both\n"))
-
-	// getty has exec'd login on ttyS0: cmdline no longer names ttyS0, but fd/0 does.
-	pidDir := filepath.Join(o.ProcDir, "200")
-	writeFile(t, filepath.Join(pidDir, "cmdline"), []byte("/bin/login\x00--\x00root\x00"))
-	if err := os.MkdirAll(filepath.Join(pidDir, "fd"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("/dev/ttyS0", filepath.Join(pidDir, "fd", "0")); err != nil {
-		t.Fatal(err)
-	}
-
-	o.setupConsole(context.Background())
-
-	if len(spawned) != 1 || spawned[0] != "ttyGS0" {
-		t.Fatalf("spawned = %v, want only [ttyGS0]", spawned)
-	}
-}
-
 func TestSetupConsoleProceedsWhenProcDirMissing(t *testing.T) {
 	m := newFakeMachine(t)
 	writeFile(t, filepath.Join(m.dir, "model"), []byte("TI AM335x BeagleBone Black"))
@@ -303,6 +240,130 @@ func TestSerialDevice(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("serialDevice(%q) = %q, want %q", tc.model, got, tc.want)
 		}
+	}
+}
+
+type bufReadWriter struct {
+	io.Reader
+	io.Writer
+}
+
+func TestServeConsoleCommands(t *testing.T) {
+	m := newFakeMachine(t)
+	o := m.options().withDefaults()
+
+	writeFile(t, filepath.Join(o.ProcDir, "uptime"), []byte("1234.56 2345.67\n"))
+	writeFile(t, filepath.Join(o.ProcDir, "meminfo"), []byte(
+		"MemTotal:        512000 kB\n"+
+			"MemFree:         200000 kB\n"+
+			"MemAvailable:    350000 kB\n"+
+			"Buffers:          10000 kB\n"+
+			"Cached:          140000 kB\n"+
+			"SwapCached:           0 kB\n"+
+			"Active:          100000 kB\n"))
+	writeFile(t, filepath.Join(o.ProcDir, "1", "comm"), []byte("wa-transcriber\n"))
+	writeFile(t, filepath.Join(o.ProcDir, "42", "comm"), []byte("wpa_supplicant\n"))
+	writeFile(t, filepath.Join(o.ProcDir, "7", "cmdline"), []byte("/usr/sbin/hostapd\x00-B\x00"))
+	writeFile(t, filepath.Join(o.ProcDir, "self", "comm"), []byte("ignored\n"))
+
+	var rebootCalls int
+	o.Reboot = func() error {
+		rebootCalls++
+		return nil
+	}
+
+	input := strings.Join([]string{
+		"",
+		"help",
+		"uptime",
+		"mem",
+		"mounts",
+		"ip",
+		"ps",
+		"bogus",
+		"reboot",
+		"help", // must not run after successful reboot
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	rw := bufReadWriter{Reader: strings.NewReader(input), Writer: &out}
+
+	o.serveConsole(context.Background(), rw, o.Log)
+
+	got := out.String()
+	for _, want := range []string{
+		"wa-transcriber diagnostic console (type 'help')",
+		"wat> ",
+		"uptime  show system uptime",
+		"1234.56 2345.67",
+		"MemTotal:        512000 kB",
+		"SwapCached:           0 kB",
+		"/dev/root",
+		"     1 wa-transcriber",
+		"     7 hostapd",
+		"    42 wpa_supplicant",
+		`unknown command "bogus" (type 'help')`,
+		"rebooting...",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("console output missing %q:\n%s", want, got)
+		}
+	}
+	// mem prints only the first 6 lines of /proc/meminfo.
+	if strings.Contains(got, "Active:          100000 kB") {
+		t.Errorf("mem output should be capped at 6 lines:\n%s", got)
+	}
+	// ps must list PIDs in numeric order (1, 7, 42) and ignore non-numeric entries.
+	i1 := strings.Index(got, "     1 wa-transcriber")
+	i7 := strings.Index(got, "     7 hostapd")
+	i42 := strings.Index(got, "    42 wpa_supplicant")
+	if !(i1 >= 0 && i1 < i7 && i7 < i42) {
+		t.Errorf("ps output not sorted numerically (1=%d, 7=%d, 42=%d):\n%s", i1, i7, i42, got)
+	}
+	if strings.Contains(got, "ignored") {
+		t.Errorf("ps output included non-numeric proc entry:\n%s", got)
+	}
+	// ip should print at least one interface line (e.g. lo) on the test host.
+	if !strings.Contains(got, "lo (") && !strings.Contains(got, "127.0.0.1") {
+		t.Errorf("ip output did not include loopback interface:\n%s", got)
+	}
+	if rebootCalls != 1 {
+		t.Errorf("rebootCalls = %d, want 1", rebootCalls)
+	}
+}
+
+func TestServeConsoleRebootFailureContinues(t *testing.T) {
+	m := newFakeMachine(t)
+	o := m.options().withDefaults()
+	o.Reboot = func() error { return errors.New("operation not permitted") }
+
+	var out bytes.Buffer
+	rw := bufReadWriter{
+		Reader: strings.NewReader("reboot\nhelp\n"),
+		Writer: &out,
+	}
+	o.serveConsole(context.Background(), rw, o.Log)
+
+	got := out.String()
+	if !strings.Contains(got, "reboot failed: operation not permitted") {
+		t.Errorf("expected reboot error in output:\n%s", got)
+	}
+	if !strings.Contains(got, "commands:") {
+		t.Errorf("expected console to stay alive after failed reboot:\n%s", got)
+	}
+}
+
+func TestClaimConsoleDeduplicatesInProcess(t *testing.T) {
+	const tty = "ttyTestDedup0"
+	t.Cleanup(func() { releaseConsole(tty) })
+	if !claimConsole(tty) {
+		t.Fatal("first claimConsole returned false")
+	}
+	if claimConsole(tty) {
+		t.Fatal("second claimConsole returned true while still active")
+	}
+	releaseConsole(tty)
+	if !claimConsole(tty) {
+		t.Fatal("claimConsole after release returned false")
 	}
 }
 

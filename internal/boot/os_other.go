@@ -2,7 +2,10 @@
 
 package boot
 
-import "errors"
+import (
+	"errors"
+	"os"
+)
 
 // The package is a Linux-only idea (PID 1, /proc, block devices). These
 // stubs exist so the program still builds on a developer's machine; nothing
@@ -19,6 +22,10 @@ func unmount(string, int) error {
 func interfaceUp(string) error { return errors.New("boot: interfaceUp is only implemented on Linux") }
 
 func setHostname(string) error { return errors.New("boot: setHostname is only implemented on Linux") }
+
+func openTTY(path string) (*os.File, error) { return os.OpenFile(path, os.O_RDWR, 0) }
+
+func rebootSystem() error { return errors.New("boot: reboot is only implemented on Linux") }
 
 const (
 	msReadOnly = 0

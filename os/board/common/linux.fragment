@@ -1,29 +1,32 @@
-# WiFi and watchdog drivers used by the network manager (M5).
-# Built as modules: mdev loads them from /etc/init.d/S90watchdog and the
-# WiFi driver is loaded on demand by the USB bus.
-CONFIG_CFG80211=m
-CONFIG_MAC80211=m
-CONFIG_RFkill=y
+# WiFi and watchdog drivers built directly into the kernel (=y): the barebones
+# appliance rootfs ships no kmod/modprobe and no mdev, so the kernel probes all
+# supported USB WiFi dongles and board watchdogs without userspace module loading.
+# CONFIG_FW_LOADER=y lets the kernel load blobs directly from /lib/firmware on
+# the read-only rootfs via request_firmware.
+CONFIG_FW_LOADER=y
+CONFIG_CFG80211=y
+CONFIG_MAC80211=y
+CONFIG_RFKILL=y
 
 # Ralink RT5370 (common cheap dongle) and MediaTek MT7612U. Neither is AP
 # capable out of the box without a firmware file: mt76x2u asks for
 # mt7662.bin/mt7662_rom_patch.bin, which the images ship through
 # BR2_PACKAGE_LINUX_FIRMWARE_MEDIATEK_MT76X2E (see the defconfigs).
-CONFIG_RT2X00=m
-CONFIG_RT2800USB=m
-CONFIG_RT2800_LIB=m
-CONFIG_MT76_CORE=m
-CONFIG_MT76_USB=m
-CONFIG_MT76x2_COMMON=m
-CONFIG_MT76x2U=m
+CONFIG_RT2X00=y
+CONFIG_RT2800USB=y
+CONFIG_RT2800_LIB=y
+CONFIG_MT76_CORE=y
+CONFIG_MT76_USB=y
+CONFIG_MT76x2_COMMON=y
+CONFIG_MT76x2U=y
 
 # Realtek RTL8188/8192 USB dongles (rtl8xxxu). The driver only advertises
 # STATION + MONITOR (no AP in Linux 6.1), so such a dongle can join a network
 # as a client but can never serve the setup AP: RT5370/MT7612U stay the
 # supported ones. Firmware: BR2_PACKAGE_LINUX_FIRMWARE_RTL_81XX.
-CONFIG_RTL8XXXU=m
+CONFIG_RTL8XXXU=y
 
 # Watchdogs: Raspberry Pi (bcm2835), BeagleBone Black (omap) and Cubieboard (sunxi).
-CONFIG_BCM2835_WDT=m
-CONFIG_OMAP_WDT=m
-CONFIG_SUNXI_WDT=m
+CONFIG_BCM2835_WDT=y
+CONFIG_OMAP_WDT=y
+CONFIG_SUNXI_WDT=y

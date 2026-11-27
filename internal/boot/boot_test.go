@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -408,6 +409,39 @@ func TestRootPartitionFallsBackToCmdline(t *testing.T) {
 	}
 	if got != "/dev/mmcblk0p2" {
 		t.Fatalf("rootPartition = %s, want /dev/mmcblk0p2", got)
+	}
+}
+
+func TestLoadModulesSkipsWhenWatchdogBuiltIn(t *testing.T) {
+	m := newFakeMachine(t)
+	writeFile(t, filepath.Join(m.devDir, "watchdog"), nil)
+	o := m.options().withDefaults()
+	o.Modules = []string{"bcm2835_wdt", "omap_wdt", "sunxi_wdt"}
+
+	o.loadModules(context.Background())
+
+	if len(m.runs) != 0 {
+		t.Fatalf("expected no modprobe calls when /dev/watchdog exists, got %v", m.runs)
+	}
+}
+
+func TestLoadModulesStopsQuietlyWhenModprobeMissing(t *testing.T) {
+	m := newFakeMachine(t)
+	var logBuf strings.Builder
+	o := m.options().withDefaults()
+	o.Log = slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	o.Modules = []string{"bcm2835_wdt", "omap_wdt", "sunxi_wdt"}
+	m.runFunc = func(_, _ string, _ []string) error {
+		return fmt.Errorf("modprobe: %w", exec.ErrNotFound)
+	}
+
+	o.loadModules(context.Background())
+
+	if len(m.runs) != 1 {
+		t.Fatalf("expected loadModules to stop after first ErrNotFound, got %v", m.runs)
+	}
+	if logBuf.Len() != 0 {
+		t.Fatalf("expected no warning when modprobe is absent, got %q", logBuf.String())
 	}
 }
 

@@ -13,10 +13,12 @@ package boot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -67,9 +69,11 @@ type Options struct {
 	// ConfigFS and UDCDir are where the USB gadget is built and bound.
 	ConfigFS string
 	UDCDir   string
-	// Spawn starts the console login on a tty (nil: busybox getty in a
-	// respawn loop).
+	// Spawn starts the built-in diagnostic console on a tty (nil: pure-Go
+	// line console on /dev/<tty>).
 	Spawn func(tty string)
+	// Reboot syncs filesystems and restarts the machine (nil: Linux reboot(2)).
+	Reboot func() error
 	// IfUp brings an interface up (nil: netlink-free ioctl on Linux).
 	IfUp func(name string) error
 	// Modules are kernel modules to load, in order, stopping at the first one
@@ -213,6 +217,9 @@ func (o Options) withDefaults() Options {
 	if o.HotplugHelper == "" {
 		o.HotplugHelper = "/sbin/mdev"
 	}
+	if o.Reboot == nil {
+		o.Reboot = rebootSystem
+	}
 	return o
 }
 
@@ -303,16 +310,25 @@ func (o Options) setHostname() {
 	o.Log.Info("host name set", "name", name)
 }
 
-// loadModules loads the first module in Options.Modules that loads. The
-// watchdog driver is the one that matters (M6): a board without it has no
-// recovery path, so a failure is logged at warning level.
+// loadModules loads the first module in Options.Modules that loads. On the
+// barebones appliance images all watchdog and WiFi drivers are built into the
+// kernel (=y), so /dev/watchdog already exists and modprobe is absent; both
+// cases return quietly without logging a warning.
 func (o Options) loadModules(ctx context.Context) {
 	if len(o.Modules) == 0 {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(o.DevDir, "watchdog")); err == nil {
+		o.Log.Info("watchdog device already present (built-in driver)")
 		return
 	}
 	var last error
 	for _, m := range o.Modules {
 		if err := o.Run(ctx, "", "modprobe", m); err != nil {
+			if errors.Is(err, exec.ErrNotFound) {
+				o.Log.Debug("modprobe not available, assuming built-in drivers", "modules", o.Modules)
+				return
+			}
 			last = err
 			continue
 		}

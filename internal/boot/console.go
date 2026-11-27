@@ -1,29 +1,39 @@
 package boot
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
+	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
-
-	"github.com/emdioh/wa-transcriber/internal/proc"
 )
 
-// The opt-in debug shell.
+// The opt-in built-in diagnostic console.
 //
-// It used to be /etc/init.d/S02console, started from rcS. With no inittab it
-// has to be started here, and it matters more than it looks: the USB CDC-ACM
-// console is the only way onto a board that has no keyboard and no other
-// network, and it exists only while a userspace program creates it. Booting as
-// init without this step would take the console away exactly when it is
-// needed most — after a change to the boot path.
+// There is no BusyBox, no /bin/sh and no getty on the barebones appliance
+// image. When wat.txt on the boot partition enables console=, wa-transcriber
+// opens the requested serial/USB-ACM/HDMI tty directly and serves a small
+// read-only diagnostic line console (plus reboot), with no shell and no
+// arbitrary command execution.
 //
-// The shell itself is busybox getty/login: the one place where the init path
-// still starts something it does not implement, on purpose. It is off unless
-// wat.txt on the boot partition says otherwise.
+// The USB CDC-ACM gadget is still created through configfs so /dev/ttyGS0
+// stays reachable on boards with a USB device controller (BeagleBone Black,
+// Cubieboard 1).
+
+// activeConsoles tracks tty names currently served in-process so repeated
+// Setup calls do not start two goroutines on the same device.
+var activeConsoles = struct {
+	mu   sync.Mutex
+	ttys map[string]bool
+}{ttys: make(map[string]bool)}
 
 // consoleChannels is the console= line of wat.txt.
 type consoleChannels struct {
@@ -33,7 +43,7 @@ type consoleChannels struct {
 }
 
 // parseConsoleMode reads a console= value. An empty value is off, and an
-// unknown one is off as well: a typo must not open a passwordless root shell.
+// unknown one is off as well: a typo must not open a console unintentionally.
 func parseConsoleMode(v string) (consoleChannels, bool) {
 	switch v {
 	case "off", "":
@@ -71,7 +81,8 @@ func watValue(data []byte, key string) (string, bool) {
 	return value, found
 }
 
-// setupConsole starts the login shell the boot partition asks for.
+// setupConsole starts the built-in diagnostic console on the channels
+// requested by wat.txt on the boot partition.
 func (o Options) setupConsole(ctx context.Context) {
 	b, err := o.ReadFile(o.WatFile)
 	if err != nil {
@@ -80,14 +91,14 @@ func (o Options) setupConsole(ctx context.Context) {
 	value, _ := watValue(b, "console")
 	ch, ok := parseConsoleMode(value)
 	if !ok {
-		o.Log.Warn("unknown console= in wat.txt, the debug shell stays off",
+		o.Log.Warn("unknown console= in wat.txt, diagnostic console stays off",
 			"value", value, "want", "off, serial, usb, hdmi, both or all")
 		return
 	}
 	if !ch.serial && !ch.usb && !ch.hdmi {
 		return
 	}
-	o.Log.Warn("debug console enabled: it is a root shell without a password",
+	o.Log.Info("diagnostic console enabled (read-only, no shell)",
 		"serial", ch.serial, "usb", ch.usb, "hdmi", ch.hdmi)
 
 	if ch.serial {
@@ -103,8 +114,8 @@ func (o Options) setupConsole(ctx context.Context) {
 		}
 	}
 	if ch.hdmi {
-		if _, err := os.Stat("/dev/tty1"); err != nil {
-			o.Log.Warn("no HDMI console, there is no /dev/tty1")
+		if _, err := os.Stat(filepath.Join(o.DevDir, "tty1")); err != nil {
+			o.Log.Warn("no HDMI console, there is no tty1")
 		} else {
 			o.spawn(ctx, "tty1")
 		}
@@ -132,31 +143,46 @@ func (o Options) serialDevice() (string, error) {
 	return "", fmt.Errorf("boot: no serial device for the console")
 }
 
-// spawn runs a getty on tty in a respawn loop, like an init would: a login
-// that ends, or a tty that is not ready yet, gets a new one a second later.
-//
-// After a PID 1 re-exec (!reset or binary self-update), the getty or login
-// started by the previous execution is still alive on tty; spawning a second
-// one would fight over the same port, so spawn skips it when o.ProcDir already
-// shows one running.
+// spawn opens /dev/<tty> and serves the built-in diagnostic console in a
+// reconnect loop so disconnecting and reconnecting a USB-serial cable works
+// cleanly. When Options.Spawn is set (tests), it delegates to that hook.
 func (o Options) spawn(ctx context.Context, tty string) {
-	if o.consoleRunning(tty) {
-		o.Log.Info("console login already running, keeping it", "tty", tty)
-		return
-	}
 	if o.Spawn != nil {
 		o.Spawn(tty)
 		return
 	}
+	if !claimConsole(tty) {
+		o.Log.Info("diagnostic console already running, keeping it", "tty", tty)
+		return
+	}
+	devPath := filepath.Join(o.DevDir, tty)
 	go func() {
+		defer releaseConsole(tty)
 		for ctx.Err() == nil {
-			cmd := exec.CommandContext(ctx, "getty", "-L", "115200", tty, "vt100")
-			if err := proc.Start(cmd); err != nil {
-				o.Log.Warn("cannot start the console login", "tty", tty, "err", err)
+			f, err := openTTY(devPath)
+			if err != nil {
+				o.Log.Debug("cannot open diagnostic console tty", "tty", tty, "err", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+					continue
+				}
+			}
+			done := make(chan struct{})
+			go func() {
+				select {
+				case <-ctx.Done():
+					_ = f.Close()
+				case <-done:
+				}
+			}()
+			o.serveConsole(ctx, f, o.Log)
+			close(done)
+			_ = f.Close()
+			if ctx.Err() != nil {
 				return
 			}
-			_ = proc.Wait(cmd)
-			o.Log.Info("console login ended, restarting it", "tty", tty)
 			select {
 			case <-ctx.Done():
 				return
@@ -166,10 +192,189 @@ func (o Options) spawn(ctx context.Context, tty string) {
 	}()
 }
 
+func claimConsole(tty string) bool {
+	activeConsoles.mu.Lock()
+	defer activeConsoles.mu.Unlock()
+	if activeConsoles.ttys[tty] {
+		return false
+	}
+	activeConsoles.ttys[tty] = true
+	return true
+}
+
+func releaseConsole(tty string) {
+	activeConsoles.mu.Lock()
+	defer activeConsoles.mu.Unlock()
+	delete(activeConsoles.ttys, tty)
+}
+
+// serveConsole runs the pure-Go read-only diagnostic line console on rw until
+// EOF, context cancellation, or a successful reboot.
+func (o Options) serveConsole(ctx context.Context, rw io.ReadWriter, log *slog.Logger) {
+	if log == nil {
+		log = o.Log
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	fmt.Fprintln(rw, "wa-transcriber diagnostic console (type 'help')")
+	scanner := bufio.NewScanner(rw)
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		fmt.Fprint(rw, "wat> ")
+		if !scanner.Scan() {
+			return
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		cmd := strings.Fields(line)[0]
+		switch cmd {
+		case "help":
+			fmt.Fprint(rw,
+				"commands:\n"+
+					"  help    show this help\n"+
+					"  uptime  show system uptime\n"+
+					"  mem     show memory summary\n"+
+					"  mounts  show mounted filesystems\n"+
+					"  ip      show network interfaces and addresses\n"+
+					"  ps      list running processes\n"+
+					"  reboot  sync filesystems and reboot\n")
+		case "uptime":
+			o.cmdUptime(rw)
+		case "mem":
+			o.cmdMem(rw)
+		case "mounts":
+			o.cmdMounts(rw)
+		case "ip":
+			cmdIP(rw)
+		case "ps":
+			o.cmdPS(rw)
+		case "reboot":
+			fmt.Fprintln(rw, "rebooting...")
+			log.Warn("diagnostic console requested reboot")
+			rebootFn := o.Reboot
+			if rebootFn == nil {
+				rebootFn = rebootSystem
+			}
+			if err := rebootFn(); err != nil {
+				fmt.Fprintf(rw, "reboot failed: %v\n", err)
+				continue
+			}
+			return
+		default:
+			fmt.Fprintf(rw, "unknown command %q (type 'help')\n", cmd)
+		}
+	}
+}
+
+func (o Options) cmdUptime(w io.Writer) {
+	b, err := o.ReadFile(filepath.Join(o.ProcDir, "uptime"))
+	if err != nil {
+		fmt.Fprintf(w, "uptime: %v\n", err)
+		return
+	}
+	fmt.Fprintln(w, strings.TrimSpace(string(b)))
+}
+
+func (o Options) cmdMem(w io.Writer) {
+	b, err := o.ReadFile(filepath.Join(o.ProcDir, "meminfo"))
+	if err != nil {
+		fmt.Fprintf(w, "mem: %v\n", err)
+		return
+	}
+	shown := 0
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fmt.Fprintln(w, line)
+		shown++
+		if shown >= 6 {
+			break
+		}
+	}
+}
+
+func (o Options) cmdMounts(w io.Writer) {
+	b, err := o.ReadFile(o.Mounts)
+	if err != nil {
+		b, err = o.ReadFile(filepath.Join(o.ProcDir, "mounts"))
+		if err != nil {
+			fmt.Fprintf(w, "mounts: %v\n", err)
+			return
+		}
+	}
+	s := strings.TrimRight(string(b), "\n")
+	if s != "" {
+		fmt.Fprintln(w, s)
+	}
+}
+
+func cmdIP(w io.Writer) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		fmt.Fprintf(w, "ip: %v\n", err)
+		return
+	}
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			fmt.Fprintf(w, "%s (%s): err=%v\n", iface.Name, iface.Flags, err)
+			continue
+		}
+		if len(addrs) == 0 {
+			fmt.Fprintf(w, "%s (%s): (no addresses)\n", iface.Name, iface.Flags)
+			continue
+		}
+		parts := make([]string, 0, len(addrs))
+		for _, a := range addrs {
+			parts = append(parts, a.String())
+		}
+		fmt.Fprintf(w, "%s (%s): %s\n", iface.Name, iface.Flags, strings.Join(parts, ", "))
+	}
+}
+
+func (o Options) cmdPS(w io.Writer) {
+	ents, err := os.ReadDir(o.ProcDir)
+	if err != nil {
+		fmt.Fprintf(w, "ps: %v\n", err)
+		return
+	}
+	var pids []int
+	for _, e := range ents {
+		if !e.IsDir() || !isNumeric(e.Name()) {
+			continue
+		}
+		if pid, err := strconv.Atoi(e.Name()); err == nil {
+			pids = append(pids, pid)
+		}
+	}
+	sort.Ints(pids)
+	for _, pid := range pids {
+		pidStr := strconv.Itoa(pid)
+		comm := ""
+		if b, err := o.ReadFile(filepath.Join(o.ProcDir, pidStr, "comm")); err == nil {
+			comm = strings.TrimSpace(string(b))
+		} else if b, err := o.ReadFile(filepath.Join(o.ProcDir, pidStr, "cmdline")); err == nil && len(b) > 0 {
+			args := strings.Split(strings.TrimRight(string(b), "\x00"), "\x00")
+			comm = filepath.Base(args[0])
+		}
+		if comm == "" {
+			comm = "?"
+		}
+		fmt.Fprintf(w, "%6d %s\n", pid, comm)
+	}
+}
+
 // usbACM exposes a CDC-ACM port on the USB client port through configfs (the
-// kernel has CONFIG_USB_CONFIGFS_ACM=y, so no module is needed) and logs in on
-// the /dev/ttyGS0 it creates. The attribute values are the ones S02console
-// wrote: Linux Foundation vendor id, multifunction composite gadget.
+// kernel has CONFIG_USB_CONFIGFS_ACM=y, so no module is needed) and starts the
+// diagnostic console on the /dev/ttyGS0 it creates. The attribute values match
+// Linux Foundation vendor id and multifunction composite gadget.
 func (o Options) usbACM(ctx context.Context) error {
 	if err := o.ensureMount(mountSpec{source: "configfs", target: o.ConfigFS, fstype: "configfs"}); err != nil {
 		return err
@@ -252,49 +457,6 @@ func (o Options) firstUDC() (string, error) {
 	return "", fmt.Errorf("boot: no USB device controller, is the port in peripheral mode?")
 }
 
-// consoleRunning reports whether a getty or login process is already running on
-// tty by scanning o.ProcDir. If o.ProcDir is empty or unreadable, it returns
-// false so spawn proceeds normally.
-func (o Options) consoleRunning(tty string) bool {
-	if o.ProcDir == "" {
-		return false
-	}
-	ents, err := os.ReadDir(o.ProcDir)
-	if err != nil {
-		return false
-	}
-	for _, e := range ents {
-		if !e.IsDir() || !isNumeric(e.Name()) {
-			continue
-		}
-		pidDir := filepath.Join(o.ProcDir, e.Name())
-		raw, err := os.ReadFile(filepath.Join(pidDir, "cmdline"))
-		if err != nil || len(raw) == 0 {
-			continue
-		}
-		args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
-		prog, rest := cmdlineProgram(args)
-		switch prog {
-		case "getty":
-			for _, arg := range rest {
-				if matchesTTY(arg, o.DevDir, tty) {
-					return true
-				}
-			}
-		case "login":
-			for _, arg := range rest {
-				if matchesTTY(arg, o.DevDir, tty) {
-					return true
-				}
-			}
-			if target, err := os.Readlink(filepath.Join(pidDir, "fd", "0")); err == nil && matchesTTY(target, o.DevDir, tty) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func isNumeric(s string) bool {
 	if s == "" {
 		return false
@@ -305,27 +467,4 @@ func isNumeric(s string) bool {
 		}
 	}
 	return true
-}
-
-func cmdlineProgram(args []string) (string, []string) {
-	if len(args) == 0 || args[0] == "" {
-		return "", nil
-	}
-	prog := filepath.Base(args[0])
-	rest := args[1:]
-	if prog == "busybox" && len(rest) > 0 {
-		prog = filepath.Base(rest[0])
-		rest = rest[1:]
-	}
-	return prog, rest
-}
-
-func matchesTTY(arg, devDir, tty string) bool {
-	if arg == tty || arg == "/dev/"+tty {
-		return true
-	}
-	if devDir != "" && arg == filepath.Join(devDir, tty) {
-		return true
-	}
-	return false
 }

@@ -3,7 +3,9 @@ package boot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -62,6 +64,23 @@ func TestColdplugUSBMissingSysfsDirIsNoop(t *testing.T) {
 
 	if len(m.runs) != 0 {
 		t.Fatalf("expected no modprobe calls when USB sysfs dir is missing, got %v", m.runs)
+	}
+}
+
+func TestColdplugUSBStopsEarlyWhenModprobeMissing(t *testing.T) {
+	m := newFakeMachine(t)
+	o := m.options().withDefaults()
+	usbDir := filepath.Join(m.sysDir, "bus", "usb", "devices")
+	writeFile(t, filepath.Join(usbDir, "1-1:1.0", "modalias"), []byte("usb:v148Fp5370\n"))
+	writeFile(t, filepath.Join(usbDir, "1-2:1.0", "modalias"), []byte("usb:v0E8Dp7612\n"))
+	m.runFunc = func(_, _ string, _ []string) error {
+		return fmt.Errorf("modprobe: %w", exec.ErrNotFound)
+	}
+
+	o.coldplugUSB(context.Background())
+
+	if len(m.runs) != 1 {
+		t.Fatalf("expected coldplugUSB to stop on first ErrNotFound, got %v", m.runs)
 	}
 }
 

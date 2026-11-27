@@ -5,6 +5,7 @@ import (
 	"flag"
 	"io"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -32,11 +33,20 @@ func TestSetInitEnv(t *testing.T) {
 	}
 }
 
-// TestInitFallback: when init mode cannot come up, the machine goes back to
-// busybox init instead of a reboot loop.
+// TestInitFallbackExecsTheOldInit: when /sbin/init is present on an older
+// image, initFallback hands control to it instead of crashing.
 func TestInitFallbackExecsTheOldInit(t *testing.T) {
-	old := execFunc
-	defer func() { execFunc = old }()
+	oldExec := execFunc
+	oldStat := statInitFunc
+	oldCrash := crashFunc
+	defer func() {
+		execFunc = oldExec
+		statInitFunc = oldStat
+		crashFunc = oldCrash
+	}()
+	statInitFunc = func(string) (os.FileInfo, error) { return nil, nil }
+	var crashed bool
+	crashFunc = func(*slog.Logger, error) { crashed = true }
 	var gotPath string
 	var gotArgs []string
 	execFunc = func(path string, argv []string, env []string) error {
@@ -46,6 +56,38 @@ func TestInitFallbackExecsTheOldInit(t *testing.T) {
 	initFallback(slog.New(slog.NewTextHandler(io.Discard, nil)), errors.New("boom"))
 	if gotPath != "/sbin/init" || len(gotArgs) != 1 || gotArgs[0] != "/sbin/init" {
 		t.Fatalf("fallback exec = %q %v, want /sbin/init", gotPath, gotArgs)
+	}
+	if crashed {
+		t.Fatal("crashFunc called when /sbin/init exec succeeded")
+	}
+}
+
+// TestInitFallbackCrashesWithoutSbinInit: on barebones appliance images there
+// is no /sbin/init, so initFallback goes straight to boot.Crash.
+func TestInitFallbackCrashesWithoutSbinInit(t *testing.T) {
+	oldExec := execFunc
+	oldStat := statInitFunc
+	oldCrash := crashFunc
+	defer func() {
+		execFunc = oldExec
+		statInitFunc = oldStat
+		crashFunc = oldCrash
+	}()
+	statInitFunc = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	var execCalled bool
+	execFunc = func(string, []string, []string) error {
+		execCalled = true
+		return nil
+	}
+	var crashErr error
+	crashFunc = func(_ *slog.Logger, err error) { crashErr = err }
+
+	initFallback(slog.New(slog.NewTextHandler(io.Discard, nil)), errors.New("boom"))
+	if execCalled {
+		t.Fatal("execFunc called when /sbin/init does not exist")
+	}
+	if crashErr == nil || !strings.Contains(crashErr.Error(), "boom") {
+		t.Fatalf("crashErr = %v, want error containing boom", crashErr)
 	}
 }
 

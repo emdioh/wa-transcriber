@@ -12,56 +12,56 @@ checklist is [../docs/hardware.md](../docs/hardware.md).
 | Partition | Filesystem | Content |
 |---|---|---|
 | 1 (boot) | FAT | firmware, kernel, device tree, `cmdline.txt`/`extlinux`, **`wat.txt`** |
-| 2 (root) | ext4, **read-only** | the whole system, `wa-transcriber` in `/usr/bin` |
-| 3 (DATA) | ext4, label `DATA` | `/data`: session, `config.json`, `wifi.json` — **created at first boot** |
+| 2 (root A) | ext4, **read-only** | barebones appliance rootfs (`wat-root-a`), `wa-transcriber` in `/usr/bin` |
+| 3 (root B) | ext4, **read-only** | inactive A/B root slot (`wat-root-b`, empty on fresh image) |
+| 4 (DATA) | ext4, label `DATA` | `/data`: session, `config.json`, `wifi.json` — **created at first boot** |
 
-Nothing is written to partition 2; `/tmp`, `/run`, `/var/log` and
-`/var/lib/misc` are tmpfs. That is what makes the device survive power cuts.
+Nothing is written to the root partition; `/tmp`, `/run`, `/var/log`, `/var/lib`
+and `/var/lib/misc` are tmpfs (and `/etc/resolv.conf` points to `/tmp/resolv.conf`).
+That is what makes the device survive power cuts.
 
-Services, all started from `board/common/rootfs-overlay`:
+The rootfs is a **barebones appliance** with **no BusyBox, no `/bin/sh`, no
+`/etc/inittab`, no `/etc/init.d/*`, no `getty`, no `kmod`/`mdev`, no `util-linux`,
+no `dnsmasq`, no `iw`, and no `wpa_cli`**. The only userspace components shipped
+alongside `/usr/bin/wa-transcriber` (PID 1) are:
 
-| Script | Role |
-|---|---|
-| `S00boot` | mounts partition 1 read-only at `/boot`, so the binary and `S02console` can read `wat.txt` |
-| `S01data` | creates and formats partition 3 on first boot, mounts `/data` (idempotent: a power cut mid-way cannot brick the card) |
-| `S02console` | optional debug login shell, off unless `wat.txt` says `console=serial`, `usb` or `both` |
-| `S40ntpd` | busybox `ntpd` against two servers; the binary waits for a sane clock anyway |
-| `S90watchdog` | loads `bcm2835_wdt` / `omap_wdt` / `sunxi_wdt` |
-| `inittab` | `::respawn:` the transcriber with `-data /data -network managed -listen :80 -watchdog /dev/watchdog` — **not used on a board that boots with `init=`**, see "Init mode" below |
+- `e2fsprogs` (`mkfs.ext4`, `e2fsck`) for formatting and checking `/data`
+- `wpa_supplicant` and `hostapd` (driven directly via nl80211 / unixgram socket)
+- WiFi firmware (`mt7662*.bin`, `rtlwifi/rtl8192eu_nic.bin`), `wireless-regdb`, and CA certificates
+
+All supported WiFi and hardware watchdog drivers (`rt2800usb`, `mt76x2u`,
+`rtl8xxxu`, `bcm2835_wdt`, `omap_wdt`, `sunxi_wdt`) are compiled directly into
+the kernel (`=y`) with `CONFIG_FW_LOADER=y`, so the kernel needs no `modprobe`
+or `mdev`.
 
 The watchdog is fed by the binary itself (5 s interval). `kill -STOP` the
 process and the board reboots within ~20 s: that is the recovery path.
 
 ## Init mode
 
-All four board images boot the transcriber as the machine's init
+All four board images boot the transcriber directly as PID 1
 (`init=/usr/bin/wa-transcriber` in `extlinux/extlinux.conf` on the BeagleBone
-Black and Cubieboard 1, and in `cmdline.txt` on the Raspberry Pi 1 and 2), so the
-kernel execs it directly and `/etc/inittab`, `rcS` and every script in
-`rootfs-overlay/etc/init.d` are skipped. `internal/boot` does what they did —
-mounts, hostname, watchdog module, `/boot`, `/data` — and
-`internal/proc` reaps the children nobody waits for, because PID 1 is the only
-reaper on the machine. `console=` in `wat.txt` works as before: the program
-creates the USB gadget itself (configfs) and starts the getty, because with no
-inittab there would otherwise be no way onto the board. Architecture: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
-D19 and section 12. The settings `/etc/inittab` used to pass are the defaults
-in `cmd/wa-transcriber/initmode.go`, and the kernel command line overrides them:
+Black and Cubieboard 1, and in `cmdline.txt` on the Raspberry Pi 1 and 2).
+`internal/boot` handles every boot task in pure Go — pseudo-filesystems and
+tmpfs mounts, hostname, loopback bring-up, `/boot` mount, `/data` MBR creation
+(`internal/part`) and ext4 mount/repair, `/boot/wat-migrate` eMMC migration,
+and the built-in diagnostic console — while `internal/sntp` handles clock sync
+and `internal/proc` reaps orphaned children. Architecture:
+[../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) D19 and section 12. The
+board defaults live in `cmd/wa-transcriber/initmode.go`, and the kernel command
+line overrides any flag as `wat.<flag>=<value>`:
 
 ```txt
 append root=/dev/mmcblk0p2 ro rootwait ... init=/usr/bin/wa-transcriber wat.network=none
 ```
 
-**Rollback without a reflash:** mount the boot partition on any machine and
-delete the `init=` token from `extlinux/extlinux.conf` or `cmdline.txt`. The
-kernel then starts busybox init again and the old script path runs, exactly as
-before D19.
+## Diagnostic console
 
-## Debug console
+There is no login shell, no BusyBox, and no `/bin/sh` on the image. An opt-in
+**built-in read-only diagnostic line console** (implemented in pure Go inside
+`internal/boot`) can be enabled through `wat.txt`:
 
-The images ship no login shell: the kernel console is the board's UART and
-nothing else listens there. A shell is opt-in through `wat.txt`:
-
-| `console=` | Shell on |
+| `console=` | Console on |
 |---|---|
 | `all` (what these images ship) | serial + USB + HDMI |
 | `off` | nothing |
@@ -71,15 +71,14 @@ nothing else listens there. A shell is opt-in through `wat.txt`:
 | `both` | `serial` + `usb` |
 | `all` | `serial` + `usb` + `hdmi` |
 
-`S02console` starts a busybox `getty` in a respawn loop and logs every
-decision to `/dev/kmsg`, so the kernel prints it on every active console.
-The template ships `console=all` while the boot and network work is being
-validated. **The root account has no password**, so anyone who can reach one
-of those ports has a root shell: set `console=off` before the device is used
-by anyone else. The USB
-path needs the port in peripheral mode (`ls /sys/class/udc`); the BeagleBone
-has `CONFIG_USB_CONFIGFS_ACM=y` built in, the Raspberry Pies have no device
-controller and logs `no USB device controller`.
+When enabled, `wa-transcriber` opens the requested tty directly (and creates
+the USB CDC-ACM gadget via configfs for `usb`) and presents a `wat> ` prompt
+with read-only inspection commands (`help`, `uptime`, `mem`, `mounts`, `ip`,
+`ps`) plus `reboot`. There is no shell and no arbitrary command execution. Set
+`console=off` to disable the console completely. The USB path needs the port in
+peripheral mode (`ls /sys/class/udc`); the BeagleBone has
+`CONFIG_USB_CONFIGFS_ACM=y` built in, while the Raspberry Pies have no device
+controller and log `no USB device controller`.
 
 Kernel messages never need `console=`: the BeagleBone boots with
 `earlycon=uart8250,mmio32,0x44e09000,115200n8 console=ttyS0,115200
@@ -200,7 +199,8 @@ whole card. Restore the two files from your backup instead; without
   (`BR2_TARGET_UBOOT_CUSTOM_TARBALL`) because `ftp.denx.de` hangs on IPv6
   from some networks, and the toolchain is musl.
   (`make -C os menuconfig-<board>` to explore, then `savedefconfig`).
-- Kernel drivers: `board/common/linux.fragment`.
+- Kernel drivers: `board/common/linux.fragment` (all WiFi and watchdog drivers
+  compiled built-in `=y` with `CONFIG_FW_LOADER=y`).
 - WiFi firmware: `BR2_PACKAGE_LINUX_FIRMWARE` in the defconfigs, trimmed to
   the two drivers the fragment enables (`MEDIATEK_MT76X2E` for
   `mt7662*.bin`, `RTL_81XX` for `rtlwifi/rtl8192eu_nic.bin`). A driver
@@ -209,9 +209,8 @@ whole card. Restore the two files from your backup instead; without
   those drivers without the matching firmware package. `post-build.sh`
   links `mediatek/mt7662*.bin` at the top of `/lib/firmware`, where the
   6.1 kernel asks for it.
-- Busybox applets: `board/common/busybox.fragment`.
 - Partition layout: `board/<board>/genimage.cfg`.
-- Anything in the root filesystem: drop the file under
-  `board/common/rootfs-overlay/`.
+- Root filesystem post-processing: `board/common/post-build.sh` and
+  `board/<board>/post-build.sh`.
 
 After changing a defconfig by hand, run `make -C os check` and then rebuild.

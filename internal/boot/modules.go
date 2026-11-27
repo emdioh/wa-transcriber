@@ -2,23 +2,24 @@ package boot
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 // USB kernel module autoloading for init mode.
 //
-// The board kernels build the USB WiFi drivers (rt2800usb, mt76x2u, rtl8xxxu,
-// cfg80211, mac80211) as modules. Under busybox init, Buildroot's S10mdev
-// registers /sbin/mdev as the kernel hotplug helper and scans sysfs to load
-// modules for devices already attached at boot. In init mode nothing runs
-// S10mdev, so boot.Setup has to do both jobs itself.
+// On the barebones appliance images all WiFi and watchdog drivers are built
+// into the kernel (=y), so neither kmod/modprobe nor mdev is installed and
+// both helpers below are fast no-ops. They remain for compatibility with older
+// or custom kernels that still build USB WiFi drivers as modules.
 
 // coldplugUSB reads every non-empty modalias file under
 // <SysDir>/bus/usb/devices/*/modalias, deduplicates the aliases, and asks
-// modprobe to load the matching kernel module for each. Failures are ignored:
-// hubs, built-in drivers, and devices without a matching module are normal.
+// modprobe to load the matching kernel module for each. If modprobe is not
+// installed (exec.ErrNotFound), it stops early because drivers are built-in.
 func (o Options) coldplugUSB(ctx context.Context) {
 	pattern := filepath.Join(o.SysDir, "bus", "usb", "devices", "*", "modalias")
 	paths, err := filepath.Glob(pattern)
@@ -45,6 +46,10 @@ func (o Options) coldplugUSB(ctx context.Context) {
 		}
 		seen[alias] = struct{}{}
 		if err := o.Run(ctx, "", "modprobe", "-b", "-q", alias); err != nil {
+			if errors.Is(err, exec.ErrNotFound) {
+				o.Log.Debug("drivers built-in, no modprobe")
+				return
+			}
 			o.Log.Debug("USB modalias not loaded", "modalias", alias, "err", err)
 			continue
 		}

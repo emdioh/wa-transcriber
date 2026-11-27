@@ -5,8 +5,8 @@
 #
 # It catches the mistakes that otherwise only show up an hour into a build
 # or, worse, at boot: a missing file referenced by a defconfig, a package
-# recipe without its name prefix, an init script without the executable bit,
-# a genimage config naming a file the board never produces.
+# recipe without its name prefix, forbidden legacy packages sneaking back in,
+# or a genimage config naming a file the board never produces.
 
 set -eu
 
@@ -48,23 +48,47 @@ ok "package recipe"
 
 # --- defconfigs ------------------------------------------------------------
 
+FRAG="$HERE/board/common/linux.fragment"
+
 for board in rpi1 rpi2 bbb cubie; do
 	defconfig="$HERE/configs/wat_${board}_defconfig"
 	[ -f "$defconfig" ] || { fail "missing $defconfig"; continue; }
 
-	grep -q '^BR2_PACKAGE_WA_TRANSCRIBER=y$' "$defconfig" ||
-		fail "$board: the transcriber package is not enabled"
-	grep -q '^# BR2_TARGET_GENERIC_REMOUNT_ROOTFS_RW is not set$' "$defconfig" ||
-		fail "$board: the root filesystem must stay read-only"
-	grep -q '^BR2_PACKAGE_HOSTAPD=y$' "$defconfig" ||
-		fail "$board: hostapd (setup AP) is not enabled"
-	grep -q '^BR2_PACKAGE_WPA_SUPPLICANT=y$' "$defconfig" ||
-		fail "$board: wpa_supplicant is not enabled"
-	grep -q '^BR2_PACKAGE_DNSMASQ=y$' "$defconfig" ||
-		fail "$board: dnsmasq (setup AP DHCP/DNS) is not enabled"
-	# S01data adds the DATA partition to the running kernel with partx.
-	grep -q '^BR2_PACKAGE_UTIL_LINUX_PARTX=y$' "$defconfig" ||
-		fail "$board: partx is missing (needed to add the DATA partition)"
+	# Required barebones appliance settings (D19).
+	for req in \
+		'^BR2_INIT_NONE=y$' \
+		'^BR2_SYSTEM_BIN_SH_NONE=y$' \
+		'^BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS=y$' \
+		'^# BR2_PACKAGE_BUSYBOX is not set$' \
+		'^# BR2_TARGET_GENERIC_REMOUNT_ROOTFS_RW is not set$' \
+		'^BR2_PACKAGE_WA_TRANSCRIBER=y$' \
+		'^BR2_PACKAGE_E2FSPROGS=y$' \
+		'^BR2_PACKAGE_WPA_SUPPLICANT=y$' \
+		'^BR2_PACKAGE_WPA_SUPPLICANT_NL80211=y$' \
+		'^BR2_PACKAGE_HOSTAPD=y$' \
+		'^BR2_PACKAGE_HOSTAPD_DRIVER_NL80211=y$' \
+		'^BR2_PACKAGE_WIRELESS_REGDB=y$' \
+		'^BR2_PACKAGE_CA_CERTIFICATES=y$'; do
+		grep -q "$req" "$defconfig" ||
+			fail "$board: defconfig missing required setting: $req"
+	done
+
+	# Forbidden legacy packages/options that were stripped from the rootfs.
+	for forbid in \
+		'^BR2_PACKAGE_BUSYBOX=y$' \
+		'^BR2_INIT_BUSYBOX=y$' \
+		'^BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_MDEV=y$' \
+		'^BR2_PACKAGE_KMOD=y$' \
+		'^BR2_PACKAGE_UTIL_LINUX=y$' \
+		'^BR2_PACKAGE_DNSMASQ=y$' \
+		'^BR2_PACKAGE_IW=y$' \
+		'^BR2_PACKAGE_WPA_SUPPLICANT_CLI=y$' \
+		'^BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES=' \
+		'^BR2_ROOTFS_OVERLAY='; do
+		if grep -q "$forbid" "$defconfig"; then
+			fail "$board: defconfig still enables forbidden legacy option: $forbid"
+		fi
+	done
 
 	# The binary has to match the CPU: an armv7 Go binary on an ARMv6 board
 	# (Raspberry Pi 1/Zero) loads and dies with no output, and vice versa.
@@ -79,12 +103,11 @@ for board in rpi1 rpi2 bbb cubie; do
 
 	# The WiFi drivers in the kernel fragment need their blobs in the rootfs.
 	# A missing one is not a build error, it is a dead dongle on the board.
-	frag="$HERE/board/common/linux.fragment"
-	if grep -q '^CONFIG_MT76x2U=m$' "$frag"; then
+	if grep -q '^CONFIG_MT76x2U=[ym]$' "$FRAG"; then
 		grep -q '^BR2_PACKAGE_LINUX_FIRMWARE_MEDIATEK_MT76X2E=y$' "$defconfig" ||
 			fail "$board: mt76x2u needs linux-firmware MEDIATEK_MT76X2E (mt7662*.bin)"
 	fi
-	if grep -q '^CONFIG_RTL8XXXU=m$' "$frag"; then
+	if grep -q '^CONFIG_RTL8XXXU=[ym]$' "$FRAG"; then
 		grep -q '^BR2_PACKAGE_LINUX_FIRMWARE_RTL_81XX=y$' "$defconfig" ||
 			fail "$board: rtl8xxxu needs linux-firmware RTL_81XX (rtl8192eu_nic.bin)"
 	fi
@@ -97,7 +120,6 @@ for board in rpi1 rpi2 bbb cubie; do
 	for ref in $(sed -n 's/.*BR2_EXTERNAL_WAT_PATH)\([^"]*\)".*/\1/p' "$defconfig"); do
 		[ -e "$HERE$ref" ] || fail "$board: defconfig references missing file $ref"
 	done
-	# Same for directory-valued options (fragments, overlay).
 	for ref in $(sed -n 's/.*BR2_EXTERNAL_WAT_PATH)\/\([^"]*\)".*/\1/p' "$defconfig"); do
 		[ -e "$HERE/$ref" ] || fail "$board: defconfig references missing path $ref"
 	done
@@ -155,30 +177,6 @@ for board in rpi1 rpi2 bbb cubie; do
 	ok "board files $board"
 done
 
-# --- rootfs overlay --------------------------------------------------------
-
-OVL="$HERE/board/common/rootfs-overlay"
-for f in etc/inittab etc/fstab etc/init.d/S00boot etc/init.d/S01data \
-	etc/init.d/S02console etc/init.d/S40ntpd etc/init.d/S90watchdog \
-	usr/lib/wat/sd.sh; do
-	[ -f "$OVL/$f" ] || fail "missing overlay file $f"
-done
-for s in "$OVL"/etc/init.d/S*; do
-	[ -x "$s" ] || fail "init script $(basename "$s") is not executable"
-done
-grep -q 'wa-transcriber -data /data -network managed -listen :80' "$OVL/etc/inittab" ||
-	fail "inittab does not respawn the transcriber in managed mode"
-# Binary self-updates (D17): init starts the factory binary, and that same
-# binary has to run the boot gate on every restart. Without both flags the
-# image either never updates or restarts straight into /data/bin.
-grep -q 'wa-transcriber -data /data .*-update-dir /data/bin' "$OVL/etc/inittab" ||
-	fail "inittab does not pass -update-dir /data/bin (binary self-updates are off)"
-grep -q 'wa-transcriber -data /data .*-bootstrap /usr/bin/wa-transcriber' "$OVL/etc/inittab" ||
-	fail "inittab does not pass -bootstrap /usr/bin/wa-transcriber (a restart would skip the boot gate)"
-# Image updates (D18): off unless init says where the state lives, and each
-# board has to describe its own boot file and slots or nothing can switch.
-grep -q 'wa-transcriber -data /data .*-image-update /data' "$OVL/etc/inittab" ||
-	fail "inittab does not pass -image-update /data (image updates are off)"
 for board in bbb:beagle:/boot/extlinux/extlinux.conf cubie:cubie:/boot/extlinux/extlinux.conf rpi1:rpi1:/boot/cmdline.txt rpi2:rpi2:/boot/cmdline.txt; do
 	dir=${board%%:*}; rest=${board#*:}; name=${rest%%:*}; boot=${rest#*:}
 	grep -q '"boot_file": "'"$boot"'"' "$HERE/board/$dir/post-build.sh" ||
@@ -186,11 +184,62 @@ for board in bbb:beagle:/boot/extlinux/extlinux.conf cubie:cubie:/boot/extlinux/
 	grep -q '"board": "'"$name"'"' "$HERE/board/$dir/post-build.sh" ||
 		fail "board/$dir/post-build.sh does not name the manifest board $name"
 done
-grep -q 'sysinit:/etc/init.d/rcS' "$OVL/etc/inittab" ||
-	fail "inittab does not run rcS"
-# Init mode (D19): every board boots the transcriber as init, so the settings
-# inittab carries above have to exist as its defaults, and each boot file has
-# to name it.
+
+# --- barebones appliance, kernel & post-build ------------------------------
+
+OVL="$HERE/board/common/rootfs-overlay"
+[ ! -e "$HERE/board/common/busybox.fragment" ] ||
+	fail "legacy board/common/busybox.fragment must be removed"
+[ ! -e "$OVL/etc/inittab" ] ||
+	fail "legacy rootfs-overlay/etc/inittab must be removed"
+for s in "$OVL"/etc/init.d/S*; do
+	if [ -e "$s" ]; then
+		fail "legacy init script must be removed: $s"
+	fi
+done
+
+# All WiFi and watchdog drivers must be built-in (=y) with CONFIG_FW_LOADER=y
+# so the kernel requires neither kmod/modprobe nor mdev.
+for cfg in \
+	CONFIG_FW_LOADER=y \
+	CONFIG_CFG80211=y \
+	CONFIG_MAC80211=y \
+	CONFIG_RFKILL=y \
+	CONFIG_RT2X00=y \
+	CONFIG_RT2800USB=y \
+	CONFIG_RT2800_LIB=y \
+	CONFIG_MT76_CORE=y \
+	CONFIG_MT76_USB=y \
+	CONFIG_MT76x2_COMMON=y \
+	CONFIG_MT76x2U=y \
+	CONFIG_RTL8XXXU=y \
+	CONFIG_BCM2835_WDT=y \
+	CONFIG_OMAP_WDT=y \
+	CONFIG_SUNXI_WDT=y; do
+	grep -q "^${cfg}\$" "$FRAG" ||
+		fail "board/common/linux.fragment must enable $cfg"
+done
+if grep -q '=m$' "$FRAG"; then
+	fail "board/common/linux.fragment must not build drivers as modules (=m)"
+fi
+
+# Common post-build.sh prepares the read-only rootfs mountpoints, resolv.conf
+# symlink, strips /etc/init.d, and links MediaTek firmware blobs.
+COMMON_PB="$HERE/board/common/post-build.sh"
+[ -x "$COMMON_PB" ] || fail "board/common/post-build.sh is not executable"
+grep -q 'mkdir -p "\$TARGET_DIR/boot"' "$COMMON_PB" ||
+	fail "post-build.sh does not create the /boot mountpoint"
+grep -q 'mkdir -p "\$TARGET_DIR/data"' "$COMMON_PB" ||
+	fail "post-build.sh does not create the /data mountpoint"
+grep -q 'ln -sf /tmp/resolv.conf "\$TARGET_DIR/etc/resolv.conf"' "$COMMON_PB" ||
+	fail "post-build.sh does not symlink /etc/resolv.conf to /tmp/resolv.conf"
+grep -q 'rm -rf "\$TARGET_DIR/etc/init.d"' "$COMMON_PB" ||
+	fail "post-build.sh does not remove /etc/init.d"
+grep -qF 'ln -sf "mediatek/$fw" "$TARGET_DIR/lib/firmware/$fw"' "$COMMON_PB" ||
+	fail "post-build.sh does not link mediatek/mt7662*.bin where the kernel looks"
+
+# Init mode (D19): every board boots the transcriber as PID 1, and initmode.go
+# carries all board defaults directly.
 for f in board/bbb/extlinux.conf board/cubie/extlinux.conf board/rpi1/cmdline.txt board/rpi2/cmdline.txt; do
 	grep -q 'init=/usr/bin/wa-transcriber' "$HERE/$f" ||
 		fail "$f does not start the transcriber as init (D19)"
@@ -202,157 +251,25 @@ for setting in 'data=boot.DataDir' 'listen=":80"' 'network="managed"' \
 	name=${setting%%=*}
 	value=${setting#*=}
 	grep -qE "^[[:space:]]*\"$name\":[[:space:]]*$value" "$INITMODE" ||
-		fail "initmode.go lacks the init default \"$name\": $value (the inittab values must not drift)"
+		fail "initmode.go lacks the init default \"$name\": $value"
 done
-# The boot path may not depend on a shell: the Go side does the partitions.
+
+# Pure-Go partitioning and filesystem handling (no sfdisk, no partx, no shell).
 BOOTPKG="$HERE/../internal/boot"
-grep -q 'sfdisk", "--append", "--no-reread"' "$BOOTPKG/disk.go" ||
-	fail "internal/boot does not create the DATA partition with sfdisk --no-reread"
-grep -q '"partx", "-a", "--nr", "4"' "$BOOTPKG/disk.go" ||
-	fail "internal/boot must let the kernel see the new partition (partx -a)"
+grep -q 'part\.AppendMBRPartition' "$BOOTPKG/disk.go" ||
+	fail "internal/boot/disk.go does not append the DATA partition with part.AppendMBRPartition"
+grep -q 'part\.AddKernelPartition' "$BOOTPKG/disk.go" ||
+	fail "internal/boot/disk.go does not register the new partition with part.AddKernelPartition"
 grep -q '"mkfs.ext4", "-q", "-L", DataLabel' "$BOOTPKG/disk.go" ||
-	fail "internal/boot does not format a fresh DATA partition with its label"
-grep -q 'e2fsck", "-p"' "$BOOTPKG/disk.go" ||
-	fail "internal/boot does not check the data filesystem once after a failed mount"
-grep -q '^LABEL=DATA' "$OVL/etc/fstab" || fail "fstab does not mount the DATA partition"
-grep -q '^LABEL=DATA.*noauto' "$OVL/etc/fstab" ||
-	fail "LABEL=DATA must be noauto: S01data mounts it after creating it"
-# sfdisk refuses to touch a disk in use without --no-reread, and the partition
-# is handed to the kernel with partx (BLKPG) because the disk is mounted.
-grep -q 'sfdisk --append --no-reread' "$OVL/etc/init.d/S01data" ||
-	fail "S01data must call sfdisk --append --no-reread"
-grep -q 'partx -a' "$OVL/etc/init.d/S01data" ||
-	fail "S01data must make the kernel see the new partition (partx -a)"
-# The label lookup goes through blkid and failed on the board even when the
-# label was there: mount the device itself.
-grep -q 'mount -t ext4 -o noatime,nodev,nosuid "\$datadev" /data' "$OVL/etc/init.d/S01data" ||
-	fail "S01data must mount \$datadev at /data, not LABEL=DATA"
-grep -q '/var/lib\ttmpfs\|/var/lib.*tmpfs' "$OVL/etc/fstab" ||
-	fail "fstab must mount a tmpfs on /var/lib (seedrng writes there)"
+	fail "internal/boot/disk.go does not format a fresh DATA partition with its label"
+grep -q '"e2fsck", "-p"' "$BOOTPKG/disk.go" ||
+	fail "internal/boot/disk.go does not check the data filesystem once after a failed mount"
+
 # Buildroot treats the local package source as immutable, so the board
 # targets must dirclean it or the image keeps the first binary it ever had.
-for board in rpi1 rpi2 bbb cubie; do
-	grep -q "wa-transcriber-dirclean" "$HERE/Makefile" ||
-		fail "os/Makefile must dirclean the transcriber package before building"
-done
-# /run/lock is on the tmpfs that "mount -a" mounts, so the mkdir comes after.
-a=$(grep -n '^::sysinit:/bin/mount -a$' "$OVL/etc/inittab" | cut -d: -f1)
-b=$(grep -n 'mkdir -p /run/lock' "$OVL/etc/inittab" | cut -d: -f1)
-[ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] ||
-	fail "inittab must mount -a before creating /run/lock (read-only root)"
-grep -q 'sysfs' "$OVL/etc/fstab" || fail "fstab does not mount /sys (needed by mdev and the network manager)"
-# Layout with two root slots (D18): DATA is p4, found by its label, and the
-# script may never take one of the system partitions for it. The empty root B
-# is made by mkimage.sh with the same label the check asserts here.
-grep -q 'wat_part "\$disk" 4' "$OVL/etc/init.d/S01data" ||
-fail "S01data must take DATA from partition 4"
-grep -q -e '-o value -s LABEL' "$OVL/etc/init.d/S01data" ||
-fail "S01data must find DATA by its label"
-grep -q -e '-s LABEL "$dev"' "$OVL/etc/init.d/S01data" ||
-fail "S01data does not look for the DATA label"
-grep -q 'wat_part "\$disk" 2' "$OVL/etc/init.d/S01data" &&
-grep -q 'wat_part "\$disk" 3' "$OVL/etc/init.d/S01data" ||
-fail "S01data must know the two root slots (p2, p3) to stay off them"
-grep -q -- '--nr 4' "$OVL/etc/init.d/S01data" ||
-fail "S01data must hand partition 4 to the kernel (partx -a --nr 4)"
-# Install to the internal storage (M11): the eMMC clone carries the staged
-# files (wat-migrate.d/) and /boot/wat-migrate on the *target's* boot
-# partition, and the first start from it copies /data across from there. The
-# staged directory is the working path: the card the files came from is out of
-# the slot by then (the ROM boots the SD when one is inserted), so a marker
-# that only names the card's DATA partition can never be honoured. Without the
-# read of the staged directory the device comes up on the internal storage
-# unpaired.
-grep -q 'migrate_from_marker' "$OVL/etc/init.d/S01data" ||
-fail "S01data does not run the /data migration (migrate_from_marker)"
-grep -q 'stageddir=/boot/wat-migrate.d' "$OVL/etc/init.d/S01data" ||
-fail "S01data does not look for the staged files on /boot (wat-migrate.d)"
-grep -q '\[ -f "\$stageddir/\$name" \]' "$OVL/etc/init.d/S01data" ||
-fail "S01data does not copy from the staged directory: the card is gone on the first eMMC boot"
-grep -q 's/^file //p' "$OVL/etc/init.d/S01data" ||
-fail "S01data does not read the file list from the migration marker"
-# The old format is still read (a card left in on a board where the first
-# boot happens with it inserted), but nothing may depend on it any more.
-grep -q 's/^from //p' "$OVL/etc/init.d/S01data" ||
-fail "S01data does not read the source partition from the migration marker"
-grep -q 'mount -t ext4 -o ro,nodev,nosuid' "$OVL/etc/init.d/S01data" ||
-fail "S01data must mount the old DATA read-only for the migration"
-grep -q '/boot/wat-migrate' "$OVL/etc/init.d/S01data" ||
-fail "S01data does not look for /boot/wat-migrate"
-# The staged files are deleted after the marker, with /boot writable for the
-# moment it takes; failing that, the marker is still gone and the copy stands.
-grep -q 'mount -o remount,rw /boot' "$OVL/etc/init.d/S01data" ||
-fail "S01data does not make /boot writable to delete the staged files"
-grep -q 'rm -rf "\$stageddir"' "$OVL/etc/init.d/S01data" ||
-fail "S01data does not delete wat-migrate.d after the copy"
-# The staged files must be gone *after* the marker: deleting them first would
-# leave a marker with nothing behind it if the power fails in between.
-m=$(grep -n 'rm -f "\$marker"' "$OVL/etc/init.d/S01data" | tail -n 1 | cut -d: -f1)
-s=$(grep -n 'rm -rf "\$stageddir"' "$OVL/etc/init.d/S01data" | tail -n 1 | cut -d: -f1)
-[ -n "$m" ] && [ -n "$s" ] && [ "$m" -lt "$s" ] ||
-fail "S01data must delete the migration marker before the staged files"
-# The migration has to run after DATA is mounted at /data, or it copies into
-# nothing.
-a=$(grep -n 'DATA mounted from \$datadev' "$OVL/etc/init.d/S01data" | head -n 1 | cut -d: -f1)
-b=$(grep -n '^migrate_from_marker$' "$OVL/etc/init.d/S01data" | tail -n 1 | cut -d: -f1)
-[ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] ||
-fail "S01data must mount DATA before migrating it"
-# The boot partition carries wat.txt: without the mount the binary silently
-# falls back to its defaults.
-grep -q 'mount .*\-t vfat .* /boot' "$OVL/etc/init.d/S00boot" ||
-	fail "S00boot does not mount the boot partition at /boot"
-grep -q 'mkdir -p "\$TARGET_DIR/boot"' "$HERE/board/common/post-build.sh" ||
-	fail "post-build.sh does not create the /boot mountpoint"
-# Linux 6.1 asks mt76x2u for mt7662*.bin at the top of /lib/firmware while
-# linux-firmware installs them under mediatek/.
-grep -qF 'ln -sf "mediatek/$fw" "$TARGET_DIR/lib/firmware/$fw"' "$HERE/board/common/post-build.sh" ||
-	fail "post-build.sh does not link mediatek/mt7662*.bin where the kernel looks"
-for s in S00boot S01data; do
-	grep -q '/usr/lib/wat/sd.sh' "$OVL/etc/init.d/$s" ||
-		fail "$s does not use the shared SD-card helpers"
-done
-# The kernel names the root filesystem /dev/root in /proc/mounts, so parsing
-# that file is the bug that left /boot and /data unmounted on real hardware.
-if grep -lE 'awk[^|]*proc/mounts' "$OVL"/etc/init.d/S* >/dev/null 2>&1; then
-	fail "an init script parses /proc/mounts: use wat_rootdev from sd.sh"
-fi
-for tty in ttyS0 ttyAMA0 ttyGS0 tty1; do
-	grep -q "$tty" "$OVL/etc/init.d/S02console" ||
-		fail "S02console does not handle $tty"
-done
-grep -q '^CONFIG_SUNXI_WDT=m$' "$HERE/board/common/linux.fragment" ||
-	fail "board/common/linux.fragment does not enable CONFIG_SUNXI_WDT=m"
-grep -q 'sunxi_wdt' "$OVL/etc/init.d/S90watchdog" ||
-	fail "S90watchdog does not try sunxi_wdt"
-ok "rootfs overlay"
-
-# --- SD card helpers (unit test, no hardware) ------------------------------
-
-(
-	. "$OVL/usr/lib/wat/sd.sh"
-	for pair in /dev/mmcblk0p2:/dev/mmcblk0 /dev/mmcblk0p10:/dev/mmcblk0 \
-		/dev/sda2:/dev/sda /dev/nvme0n1p2:/dev/nvme0n1; do
-		got=$(wat_disk "${pair%%:*}")
-		[ "$got" = "${pair##*:}" ] || {
-			printf 'FAIL: wat_disk %s = %s, want %s\n' "${pair%%:*}" "$got" "${pair##*:}" >&2
-			false
-		}
-	done
-	[ "$(wat_part /dev/mmcblk0 3)" = /dev/mmcblk0p3 ] || {
-		echo "FAIL: wat_part /dev/mmcblk0 3" >&2
-		false
-	}
-	[ "$(wat_part /dev/sda 1)" = /dev/sda1 ] || {
-		echo "FAIL: wat_part /dev/sda 1" >&2
-		false
-	}
-	# The card layout is p1 boot, p2 root A, p3 root B, p4 DATA.
-	[ "$(wat_part /dev/mmcblk0 4)" = /dev/mmcblk0p4 ] || {
-		echo "FAIL: wat_part /dev/mmcblk0 4" >&2
-		false
-	}
-) || fail "sd.sh helpers return the wrong device names"
-ok "sd.sh helpers"
+grep -q "wa-transcriber-dirclean" "$HERE/Makefile" ||
+	fail "os/Makefile must dirclean the transcriber package before building"
+ok "barebones appliance rootfs"
 
 # --- wat.txt template ------------------------------------------------------
 

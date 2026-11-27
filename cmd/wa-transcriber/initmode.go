@@ -30,11 +30,16 @@ var initDefaults = map[string]string{
 }
 
 // initPath is the PATH the kernel does not give init: it passes a private
-// environment with HOME and TERM and nothing else, and every helper the boot
-// path and the network manager run (getty, modprobe, sfdisk, partx, mkfs.ext4,
-// e2fsck, udhcpc, wpa_supplicant) lives in one of these directories.
-// Without it every exec by bare name fails with "executable file not found".
+// environment with HOME and TERM and nothing else, and the remaining helpers
+// on the barebones rootfs (e2fsprogs: mkfs.ext4/e2fsck, wpa_supplicant,
+// hostapd) live in one of these directories. Without it every exec by bare
+// name fails with "executable file not found".
 const initPath = "/sbin:/usr/sbin:/bin:/usr/bin"
+
+var (
+	statInitFunc = os.Stat
+	crashFunc    = boot.Crash
+)
 
 // setInitEnv fills the environment the kernel does not pass to init.
 func setInitEnv(lookupEnv func(string) (string, bool), setenv func(string, string) error) {
@@ -44,25 +49,23 @@ func setInitEnv(lookupEnv func(string) (string, bool), setenv func(string, strin
 	_ = setenv("PATH", initPath)
 }
 
-// initFallback hands the machine back to the old init path when init mode
-// cannot come up: /sbin/init (busybox) reads /etc/inittab, runs rcS and
-// respawns the transcriber exactly as before D19.
-//
-// This is what makes the mode safe to try on a board that is twenty minutes
-// away: a mount that does not work out leaves a device that boots the old way
-// with a console, instead of a reboot loop whose only exit is a card reader.
-// Everything Setup does is idempotent, so the old scripts find their
-// filesystems where it left them.
+// initFallback handles a boot.Setup failure when running as PID 1. On older
+// images that still carry /sbin/init, it execs /sbin/init as a recovery path;
+// on barebones appliance images (no BusyBox, no /sbin/init), it goes straight
+// to boot.Crash to log the reason to /dev/kmsg and reboot cleanly.
 func initFallback(log *slog.Logger, cause error) {
-	log.Error("init mode failed, falling back to /sbin/init", "err", cause)
-	if f, err := os.OpenFile("/dev/kmsg", os.O_WRONLY, 0); err == nil {
-		fmt.Fprintf(f, "wa-transcriber: init mode failed (%v), starting /sbin/init\n", cause)
-		_ = f.Close()
+	if _, err := statInitFunc("/sbin/init"); err == nil {
+		log.Error("init mode failed, falling back to /sbin/init", "err", cause)
+		if f, err := os.OpenFile("/dev/kmsg", os.O_WRONLY, 0); err == nil {
+			fmt.Fprintf(f, "wa-transcriber: init mode failed (%v), starting /sbin/init\n", cause)
+			_ = f.Close()
+		}
+		if err := execFunc("/sbin/init", []string{"/sbin/init"}, os.Environ()); err != nil {
+			crashFunc(log, fmt.Errorf("init mode failed (%v) and /sbin/init failed: %w", cause, err))
+		}
+		return
 	}
-	if err := execFunc("/sbin/init", []string{"/sbin/init"}, os.Environ()); err != nil {
-		// No busybox either: the only thing left is the crash path.
-		boot.Crash(log, fmt.Errorf("init mode failed (%v) and /sbin/init failed: %w", cause, err))
-	}
+	crashFunc(log, fmt.Errorf("init mode failed: %w", cause))
 }
 
 // watchdogModules are tried in order: the driver differs per board (BCM2835
