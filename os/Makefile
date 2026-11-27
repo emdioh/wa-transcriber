@@ -72,7 +72,9 @@ $(GO_DIST_armv6): $(GO_SOURCES)
 buildroot: $(BUILDROOT_DIR)/.stamp-extracted
 
 $(BUILDROOT_TARBALL):
-	curl -fL -o $@ $(BUILDROOT_URL)
+	@mkdir -p $(BUILDROOT_ROOT)
+	curl -fL -o $@.part $(BUILDROOT_URL)
+	mv $@.part $@
 
 $(BUILDROOT_DIR)/.stamp-extracted: $(BUILDROOT_TARBALL)
 	@mkdir -p $(BUILDROOT_ROOT)
