@@ -114,9 +114,15 @@ func (m *managed) Start(ctx context.Context) error {
 	return nil
 }
 
-// serveMDNS answers wa.local on every interface as soon as it has an address.
+// serveMDNS answers <hostname>.local (from wat.txt, default wa.local) on every
+// interface as soon as it has an address.
 func (m *managed) serveMDNS(ctx context.Context) {
-	r := &mdns.Responder{Name: "wa"}
+	name, err := Hostname(m.watTxtPath)
+	if err != nil {
+		m.log.Warn("network manager: hostname in wat.txt ignored, using default", "file", m.watTxtPath, "err", err)
+	}
+	m.log.Info("network manager: mdns", "name", name+".local")
+	r := &mdns.Responder{Name: name}
 	ifaces := func() []mdns.Iface {
 		byName := map[string]*mdns.Iface{}
 		for _, a := range m.addrs() {

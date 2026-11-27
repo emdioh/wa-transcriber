@@ -3,6 +3,8 @@ package web
 import (
 	"net"
 	"net/http"
+	"os"
+	"strings"
 )
 
 // apIP is the setup AP's own address; a captive portal redirects here.
@@ -42,7 +44,12 @@ func (s *Server) captivePortal(next http.Handler) http.Handler {
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
 		}
-		known := host == apIP || host == "wa.local" || host == "" || host == "localhost"
+		host = strings.ToLower(host)
+		localHost := ""
+		if hn, err := os.Hostname(); err == nil && hn != "" {
+			localHost = strings.ToLower(hn) + ".local"
+		}
+		known := host == apIP || host == "wa.local" || (localHost != "" && host == localHost) || host == "" || host == "localhost"
 		if !known || captivePaths[r.URL.Path] {
 			http.Redirect(w, r, "http://"+apIP+"/", http.StatusFound)
 			return

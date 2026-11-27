@@ -139,3 +139,36 @@ func TestProvisionWifiWithoutAFile(t *testing.T) {
 		t.Fatalf("ProvisionWifi = %q, %v", ssid, err)
 	}
 }
+
+func TestHostnameFromWatTxt(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		want    string
+		wantErr bool
+	}{
+		{"custom", "hostname=wabbb\r\n", "wabbb", false},
+		{"with local suffix", "hostname=WaBBB.local\n", "wabbb", false},
+		{"inline comment", "hostname=wabbb # basement\n", "wabbb", false},
+		{"last wins", "hostname=wa\nhostname=wabbb\n", "wabbb", false},
+		{"absent key", "country=IT\n", "wa", false},
+		{"invalid spaces", "hostname=wa bbb\n", "wa", true},
+		{"invalid leading dash", "hostname=-wabbb\n", "wa", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			watPath, _ := writeProvisionWat(t, c.body)
+			got, err := Hostname(watPath)
+			if got != c.want {
+				t.Errorf("Hostname() = %q, want %q", got, c.want)
+			}
+			if (err != nil) != c.wantErr {
+				t.Errorf("Hostname() err = %v, wantErr %v", err, c.wantErr)
+			}
+		})
+	}
+	got, err := Hostname(filepath.Join(t.TempDir(), "missing.txt"))
+	if got != "wa" || err != nil {
+		t.Fatalf("missing file: Hostname() = %q, %v; want wa, nil", got, err)
+	}
+}
